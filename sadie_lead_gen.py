@@ -10,7 +10,7 @@ Unified pipeline that:
 5. Filters out bad leads (apartments, OTAs, chains without direct booking, etc.)
 
 Usage:
-    python sadie_lead_gen.py --center-lat 25.7617 --center-lng -80.1918 --overall-radius-km 35
+    python3 sadie_lead_gen.py --center-lat 25.7617 --center-lng -80.1918 --overall-radius-km 35
 
 Requires:
     - GOOGLE_PLACES_API_KEY in .env file
@@ -45,13 +45,13 @@ DEFAULT_GRID_ROWS = 5
 DEFAULT_GRID_COLS = 5
 DEFAULT_MAX_PAGES_PER_CENTER = 3
 
-OUTPUT_CSV = "saide_leads.csv"
+OUTPUT_CSV = "sadie_leads.csv"
 SCREENSHOTS_DIR = "screenshots"
 
 # Timeouts (milliseconds)
-TIMEOUT_PAGE_LOAD = 60000       # 60s - initial page load
-TIMEOUT_BOOKING_CLICK = 30000   # 30s - after clicking booking button
-TIMEOUT_POPUP_DETECT = 10000    # 10s - detecting if click opens new tab
+TIMEOUT_PAGE_LOAD = 30000       # 30s - initial page load
+TIMEOUT_BOOKING_CLICK = 15000   # 15s - after clicking booking button
+TIMEOUT_POPUP_DETECT = 5000     # 5s - detecting if click opens new tab
 
 # Booking engine patterns - domains that indicate which booking engine is used
 ENGINE_PATTERNS = {
@@ -443,18 +443,22 @@ async def click_and_get_booking_page(context, page, timeout_ms: int = TIMEOUT_BO
 
 
 async def detect_engine_from_frames(page):
-    """Check iframes for booking engine signatures."""
+    """Check iframes for booking engine signatures. Returns (engine, domain, method, frame_url)."""
     for frame in page.frames:
         try:
             frame_url = frame.url
         except Exception:
             continue
         
+        # Skip about:blank and same-origin frames
+        if not frame_url or frame_url.startswith("about:"):
+            continue
+        
         # Check URL for engine patterns
         for engine_name, patterns in ENGINE_PATTERNS.items():
             for pat in patterns:
                 if pat in frame_url.lower():
-                    return engine_name, pat, "frame_url_match"
+                    return engine_name, pat, "frame_url_match", frame_url
 
         # Check frame HTML
         try:
@@ -463,9 +467,9 @@ async def detect_engine_from_frames(page):
             html = ""
         engine, method = detect_engine_from_html(html)
         if engine:
-            return engine, "", f"frame_{method}"
+            return engine, "", f"frame_{method}", frame_url
 
-    return "", "", ""
+    return "", "", "", ""
 
 
 async def sniff_network_for_engine(network_hosts: set, hotel_domain: str):
@@ -585,12 +589,15 @@ async def process_hotel(idx, total, hotel, browser, semaphore, screenshots_dir, 
             
             # Check frames/iframes
             if engine_name in ("", "unknown", "unknown_third_party", "proprietary_or_same_domain"):
-                frame_engine, frame_domain, frame_method = await detect_engine_from_frames(booking_page or page)
+                frame_engine, frame_domain, frame_method, frame_url = await detect_engine_from_frames(booking_page or page)
                 if frame_engine:
                     engine_name = frame_engine
                     if not engine_domain:
                         engine_domain = frame_domain
                     detection_method = f"{detection_method}+{frame_method}"
+                    # Capture frame URL as booking URL if we don't have one
+                    if not result["booking_url"] and frame_url:
+                        result["booking_url"] = frame_url
             
             # Take screenshot of booking page
             if booking_page or booking_url:
