@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """
+DEPRECATED - KEEPING IT FOR REFERENCE
 Sadie Lead Generation Script
 =============================
 Unified pipeline that:
