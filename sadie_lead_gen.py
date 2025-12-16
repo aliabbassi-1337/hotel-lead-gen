@@ -417,7 +417,7 @@ async def click_and_get_booking_page(context, page, timeout_ms: int = TIMEOUT_BO
                 await el.click()
             new_page = await p_info.value
             try:
-                await new_page.wait_for_load_state("networkidle", timeout=timeout_ms)
+                await new_page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
             except PWTimeoutError:
                 pass
             return (new_page, new_page.url, "popup_page")
@@ -428,7 +428,7 @@ async def click_and_get_booking_page(context, page, timeout_ms: int = TIMEOUT_BO
             except Exception:
                 continue
             try:
-                await page.wait_for_load_state("networkidle", timeout=timeout_ms)
+                await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
             except PWTimeoutError:
                 pass
 
@@ -536,7 +536,9 @@ async def process_hotel(idx, total, hotel, browser, semaphore, screenshots_dir, 
         page.on("request", handle_request)
         
         try:
-            await page.goto(website, timeout=TIMEOUT_PAGE_LOAD, wait_until="networkidle")
+            await page.goto(website, timeout=TIMEOUT_PAGE_LOAD, wait_until="domcontentloaded")
+            # Give page a moment to render JS
+            await asyncio.sleep(2)
             hotel_domain = extract_domain(page.url)
             log(f"  Loaded: {hotel_domain}")
             
