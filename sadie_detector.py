@@ -11,14 +11,15 @@ Usage:
 import csv
 import os
 import re
+import sys
 import argparse
 import asyncio
 from datetime import datetime
 from urllib.parse import urlparse
 from pathlib import Path
 from dataclasses import dataclass, asdict
-from typing import Optional
 
+from loguru import logger
 from playwright.async_api import async_playwright, TimeoutError as PWTimeoutError
 
 
@@ -74,6 +75,12 @@ BOOKING_BUTTON_KEYWORDS = [
     "check rates", "availability", "book online", "book a room",
 ]
 
+# Big chains to skip - they have their own booking systems, not good leads
+SKIP_CHAIN_DOMAINS = [
+    "marriott.com", "hilton.com", "ihg.com", "hyatt.com", "wyndham.com",
+    "choicehotels.com", "bestwestern.com", "radissonhotels.com", "accor.com",
+]
+
 # ============================================================================
 # DATA MODELS
 # ============================================================================
@@ -118,31 +125,36 @@ class HotelResult:
 # LOGGING
 # ============================================================================
 
-class Logger:
-    """Simple logger that writes to both console and file."""
+def setup_logging(debug: bool = False):
+    """Configure loguru logging."""
+    logger.remove()
     
-    def __init__(self, log_file: str):
-        self.file = open(log_file, "w", encoding="utf-8")
+    # Console: INFO by default, DEBUG if flag set
+    log_level = "DEBUG" if debug else "INFO"
+    logger.add(
+        sys.stderr,
+        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+        level=log_level,
+        colorize=True,
+    )
     
-    def log(self, msg: str) -> None:
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        line = f"[{ts}] {msg}"
-        print(line)
-        self.file.write(line + "\n")
-        self.file.flush()
-    
-    def close(self):
-        self.file.close()
+    # File: Always DEBUG
+    logger.add(
+        "sadie_detector.log",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
+        level="DEBUG",
+        rotation="10 MB",
+    )
 
-
-# Global logger instance
-logger: Optional[Logger] = None
 
 def log(msg: str) -> None:
-    if logger:
-        logger.log(msg)
-    else:
-        print(msg)
+    """Log wrapper for backwards compatibility."""
+    logger.info(msg)
+
+
+def log_debug(msg: str) -> None:
+    """Debug log."""
+    logger.debug(msg)
 
 
 # ============================================================================
@@ -402,7 +414,7 @@ class BookingButtonFinder:
                 elif href == "#" or href.startswith("#") or not href:
                     return 2  # Worst: hash or no href
                 return 1
-            except:
+            except Exception:
                 return 2
         
         # Sort by href quality
@@ -432,7 +444,7 @@ class BookingButtonFinder:
                 
                 # Skip if element text doesn't contain any booking keywords
                 if not any(word in el_text for word in booking_words):
-                    log(f"    [CLICK] Skipping - no booking text in element")
+                    log("    [CLICK] Skipping - no booking text in element")
                     continue
                 
                 # If it's a link with an external URL, just grab it!
@@ -448,7 +460,7 @@ class BookingButtonFinder:
                     is_external_booking = not is_internal and not is_protocol_link and not is_social and not is_bad_page and not is_image and not is_cdn
                 
                 if el_href and is_external_booking:
-                    log(f"    [CLICK] Found booking URL in href, skipping click")
+                    log("    [CLICK] Found booking URL in href, skipping click")
                     return (None, el_href, "href_extraction")
                 
                 # Otherwise try clicking
@@ -940,11 +952,19 @@ class DetectorPipeline:
             await browser.close()
     
     def _load_hotels(self, input_csv: str) -> list[dict]:
-        """Load hotels from CSV."""
+        """Load hotels from CSV, filtering out big chains."""
         hotels = []
+        skipped = 0
         with open(input_csv, newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
+                website = row.get("website", "").lower()
+                # Skip big hotel chains - they have their own booking systems
+                if any(chain in website for chain in SKIP_CHAIN_DOMAINS):
+                    skipped += 1
+                    continue
                 hotels.append(row)
+        if skipped:
+            log(f"Skipped {skipped} big chain hotels (Marriott, Hilton, etc.)")
         return hotels
     
     def _filter_processed(self, hotels: list[dict]) -> tuple[list[dict], bool]:
@@ -997,15 +1017,24 @@ class DetectorPipeline:
         self._print_summary(stats)
     
     def _print_summary(self, stats: dict):
-        """Print final summary."""
-        log(f"\n{'='*60}")
-        log("COMPLETE!")
-        log(f"Processed: {stats['processed']} hotels")
-        log(f"Known booking engines: {stats['known_engine']}")
-        log(f"Errors: {stats['errors']}")
-        log(f"Output: {self.config.output_csv}")
-        log(f"Screenshots: {self.config.screenshots_dir}/")
-        log(f"{'='*60}")
+        """Print final summary with hit rate."""
+        total = stats['processed']
+        known = stats['known_engine']
+        hit_rate = (known / total * 100) if total > 0 else 0
+        
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("DETECTION COMPLETE!")
+        logger.info("=" * 60)
+        logger.info(f"Hotels processed:    {total}")
+        logger.info(f"Known engines:       {known}")
+        logger.info(f"Unknown/proprietary: {total - known - stats['errors']}")
+        logger.info(f"Errors:              {stats['errors']}")
+        logger.info("-" * 60)
+        logger.info(f"HIT RATE:            {hit_rate:.1f}%")
+        logger.info("=" * 60)
+        logger.info(f"Output: {self.config.output_csv}")
+        logger.info(f"Screenshots: {self.config.screenshots_dir}/")
 
 
 # ============================================================================
@@ -1026,8 +1055,6 @@ async def main_async(args):
 
 
 def main():
-    global logger
-    
     parser = argparse.ArgumentParser(description="Sadie Detector - Booking Engine Detection")
     parser.add_argument("--input", required=True, help="Input CSV with hotels")
     parser.add_argument("--output", default="sadie_leads.csv", help="Output CSV file")
@@ -1035,18 +1062,16 @@ def main():
     parser.add_argument("--concurrency", type=int, default=5)
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--pause", type=float, default=0.5)
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     
     args = parser.parse_args()
     
     if not os.path.exists(args.input):
         raise SystemExit(f"Input file not found: {args.input}")
     
-    logger = Logger("sadie_detector.log")
+    setup_logging(args.debug)
     
-    try:
-        asyncio.run(main_async(args))
-    finally:
-        logger.close()
+    asyncio.run(main_async(args))
 
 
 if __name__ == "__main__":
