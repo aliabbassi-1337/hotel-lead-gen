@@ -31,7 +31,7 @@ from playwright.async_api import async_playwright, TimeoutError as PWTimeoutErro
 class Config:
     """Central configuration for the detector."""
     # Timeouts (milliseconds)
-    timeout_page_load: int = 15000      # 15s
+    timeout_page_load: int = 120000     # 120s (some sites are very slow)
     timeout_booking_click: int = 3000   # 3s (was 10s!)
     timeout_popup_detect: int = 1500    # 1.5s
     
@@ -67,6 +67,7 @@ ENGINE_PATTERNS = {
     "Marriott": ["marriott.com"],
     "Hilton": ["hilton.com"],
     "Vacatia": ["vacatia.com"],
+    "JEHS / iPMS": ["ipms247.com", "live.ipms247.com"],
 }
 
 # Keywords to identify booking buttons
@@ -365,7 +366,27 @@ class BookingButtonFinder:
         # Use Playwright's text selector - try common booking button texts
         # Order matters: more specific/reliable first, generic fallbacks last
         selectors = [
-            # PRIMARY: Booking buttons (highest priority) - include div/span for custom elements
+            # HIGHEST PRIORITY: Direct links to known booking engines
+            "a[href*='ipms247']",
+            "a[href*='synxis']",
+            "a[href*='cloudbeds']",
+            "a[href*='direct-book']",
+            "a[href*='bookingsuite']",
+            "a[href*='travelclick']",
+            "a[href*='webrezpro']",
+            "a[href*='resnexus']",
+            # INPUT SUBMIT buttons (often the actual booking button!)
+            "input[type='submit'][value*='Availability' i]",
+            "input[type='submit'][value*='Book' i]",
+            "input[type='submit'][value*='Reserve' i]",
+            "input[type='submit'][value*='Check' i]",
+            # Availability buttons (often link to booking engines)
+            "button:has-text('check availability')",
+            "a:has-text('check availability')",
+            "button:has-text('availability')",
+            "a:has-text('availability')",
+            "[role='button']:has-text('availability')",
+            # Book now buttons
             "button:has-text('book now')",
             "a:has-text('book now'):not([href*='facebook'])",
             "[role='button']:has-text('book now')",
@@ -384,17 +405,12 @@ class BookingButtonFinder:
             "button:has-text('reserve')",
             "a:has-text('reserve'):not([href*='facebook']):not([href*='spa']):not([href*='conference'])",
             "[role='button']:has-text('reserve')",
-            # Availability/rates
-            "button:has-text('check availability')",
-            "button:has-text('availability')",
-            "a:has-text('check availability')",
+            # Check rates
+            "button:has-text('check rates')",
             "a:has-text('check rates')",
-            # URL-based selectors (booking engine links)
+            # URL-based selectors (other booking engine links)
             "a[href*='reservations']",
             "a[href*='booking']",
-            "a[href*='synxis']",
-            "a[href*='cloudbeds']",
-            "a[href*='direct-book']",
             # FALLBACK: Generic room links (lower priority)
             "a:has-text('find rooms')",
             "a:has-text('rooms'):not([href*='facebook'])",
@@ -509,21 +525,17 @@ class BookingButtonFinder:
         
         import time
         
-        # Words that indicate a booking button (not just navigation)
-        # "rooms" is last resort - only used if no better match found
-        booking_words = ["book", "reserve", "availability", "check rates", "check availability", "rooms"]
-        
         for i, el in enumerate(candidates):
             try:
-                # Get element info
-                el_text = (await el.text_content() or "").strip().lower()
-                el_href = await el.get_attribute("href") or ""
-                log(f"    [CLICK] Candidate {i}: '{el_text[:30]}' -> {el_href[:60] if el_href else 'no-href'}")
-                
-                # Skip if element text doesn't contain any booking keywords
-                if not any(word in el_text for word in booking_words):
-                    log("    [CLICK] Skipping - no booking text in element")
+                # Get element info with short timeout (element might be stale)
+                try:
+                    el_text = (await asyncio.wait_for(el.text_content(), timeout=2.0) or "").strip().lower()
+                    el_href = await asyncio.wait_for(el.get_attribute("href"), timeout=2.0) or ""
+                except asyncio.TimeoutError:
+                    log(f"    [CLICK] Candidate {i}: STALE, skipping...")
                     continue
+                
+                log(f"    [CLICK] Candidate {i}: '{el_text[:30]}' -> {el_href[:60] if el_href else 'no-href'}")
                 
                 # If it's a link with an external URL, just grab it!
                 # Skip: internal paths, hash links, social media, clearly non-booking pages, mailto/tel, images, CDNs
@@ -573,15 +585,42 @@ class BookingButtonFinder:
                     log(f"    [CLICK] No popup after {time.time() - click_start:.1f}s, checking URL...")
                 except Exception as click_err:
                     log(f"    [CLICK] Click failed: {str(click_err)[:80]}")
-                    continue  # Try next candidate
+                    continue
                 
                 # No popup - wait for sidebar/modal to appear
                 await asyncio.sleep(0.5)
                 
-                # Check if URL changed
+                # Check if URL changed to an external booking engine
                 if page.url != original_url:
-                    log(f"    [CLICK] URL changed to: {page.url[:60]}")
-                    return (page, page.url, "same_page_navigation")
+                    new_url = page.url
+                    new_domain = extract_domain(new_url)
+                    original_domain = extract_domain(original_url)
+                    
+                    # Check if we navigated to an external booking engine
+                    is_external = new_domain != original_domain
+                    is_booking_engine = False
+                    for engine_patterns in ENGINE_PATTERNS.values():
+                        for pattern in engine_patterns:
+                            if pattern in new_domain.lower():
+                                is_booking_engine = True
+                                break
+                        if is_booking_engine:
+                            break
+                    
+                    if is_external and is_booking_engine:
+                        log(f"    [CLICK] ✓ Found booking engine: {new_url[:60]}")
+                        return (page, new_url, "same_page_navigation")
+                    elif is_external:
+                        log(f"    [CLICK] ✓ External URL: {new_url[:60]}")
+                        return (page, new_url, "same_page_navigation")
+                    else:
+                        log("    [CLICK] Internal navigation, going back...")
+                        try:
+                            await page.go_back(timeout=5000)
+                            await asyncio.sleep(0.3)
+                        except Exception:
+                            pass
+                        continue
                 
                 log("    [CLICK] URL unchanged, trying 2nd stage...")
                 # Try second-stage click (sidebar might have appeared)
@@ -589,14 +628,21 @@ class BookingButtonFinder:
                 if second_stage:
                     return second_stage
                 
-                # Return page for iframe scanning
-                return (page, None, "clicked_no_navigation")
+                # This candidate didn't work - go back to homepage to try next
+                log(f"    [CLICK] Candidate {i} failed, going back...")
+                try:
+                    await page.goto(original_url, timeout=15000, wait_until="domcontentloaded")
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    pass
+                continue
                     
             except Exception as e:
-                log(f"    [CLICK] Error getting element info: {e}")
+                log(f"    [CLICK] Error: {e}")
                 continue
         
-        return (None, None, "no_booking_button_found")
+        # No candidates worked - return page for iframe scanning as last resort
+        return (page if page else None, None, "no_booking_button_found")
     
     async def _debug_page_elements(self, page):
         """Log all buttons and prominent links on the page for debugging."""
@@ -638,13 +684,23 @@ class BookingButtonFinder:
         
         # Look for booking buttons that might have appeared
         second_selectors = [
+            # Availability first
+            "button:has-text('check availability')",
+            "a:has-text('check availability')",
+            "button:has-text('availability')",
+            "a:has-text('availability')",
+            # Then book/rates
             "button:has-text('book now')",
             "button:has-text('check rates')",
-            "button:has-text('check availability')",
             "button:has-text('search')",
             "button:has-text('view rates')",
             "a:has-text('book now')",
             "a:has-text('check rates')",
+            # Direct booking engine links
+            "a[href*='ipms247']",
+            "a[href*='synxis']",
+            "a[href*='cloudbeds']",
+            # Submit buttons
             "input[type='submit']",
             "button[type='submit']",
         ]
@@ -733,7 +789,8 @@ class HotelProcessor:
     async def _process_website(self, result: HotelResult) -> HotelResult:
         """Visit website and extract all data."""
         context = await self.browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            ignore_https_errors=True,  # Some hotel sites have bad SSL certs
         )
         page = await context.new_page()
         
@@ -823,6 +880,13 @@ class HotelProcessor:
             result.booking_engine = engine_name or "unknown"
             result.booking_engine_domain = engine_domain
             
+            # Mark as error ONLY if we found no booking URL, no known engine, AND no contact info
+            has_contact_info = bool(result.phone_website or result.phone_google or result.email)
+            if not result.booking_url and result.booking_engine == "unknown" and not has_contact_info:
+                result.error = "no_booking_found"
+            elif not result.booking_url and result.booking_engine == "unknown" and has_contact_info:
+                result.booking_engine = "contact_only"  # Mark as contact-only lead
+            
             # Take homepage screenshot if no booking screenshot was taken
             if not result.screenshot_path:
                 result = await self._take_screenshot(page, result, suffix="_homepage")
@@ -859,6 +923,32 @@ class HotelProcessor:
                 result.phone_website = phones[0]
             if emails:
                 result.email = emails[0]
+            
+            # Also extract from tel: and mailto: links
+            if not result.phone_website:
+                try:
+                    tel_links = await page.evaluate("""
+                        () => Array.from(document.querySelectorAll('a[href^="tel:"]'))
+                            .map(a => a.href.replace('tel:', '').replace(/[^0-9+()-]/g, ''))
+                            .filter(p => p.length >= 10)
+                    """)
+                    if tel_links:
+                        result.phone_website = tel_links[0]
+                except Exception:
+                    pass
+            
+            if not result.email:
+                try:
+                    mailto_links = await page.evaluate("""
+                        () => Array.from(document.querySelectorAll('a[href^="mailto:"]'))
+                            .map(a => a.href.replace('mailto:', '').split('?')[0])
+                            .filter(e => e.includes('@'))
+                    """)
+                    if mailto_links:
+                        result.email = mailto_links[0]
+                except Exception:
+                    pass
+                    
         except Exception:
             pass
         return result
@@ -1117,7 +1207,7 @@ class DetectorPipeline:
             os.makedirs(output_dir, exist_ok=True)
         
         # Collect all new results first
-        stats = {"processed": 0, "known_engine": 0, "booking_url_found": 0, "errors": 0, "skipped_no_result": 0, "saved": 0}
+        stats = {"processed": 0, "known_engine": 0, "booking_url_found": 0, "contact_only": 0, "errors": 0, "skipped_no_result": 0, "saved": 0}
         new_results = {}  # {(name, website): result_dict}
         
         for coro in asyncio.as_completed(tasks):
@@ -1129,6 +1219,10 @@ class DetectorPipeline:
             
             if result.booking_engine and result.booking_engine not in ("", "unknown", "unknown_third_party", "proprietary_or_same_domain"):
                 stats["known_engine"] += 1
+            
+            # Count contact_only leads separately
+            if result.booking_engine == "contact_only":
+                stats["contact_only"] += 1
             
             # Count as hit if we found a booking URL (regardless of engine recognition)
             has_booking_url = result.booking_url and result.booking_url.strip()
@@ -1166,9 +1260,11 @@ class DetectorPipeline:
         total = stats['processed']
         known = stats['known_engine']
         booking_urls_found = stats['booking_url_found']
+        contact_only_found = stats.get('contact_only', 0)
         
-        # Hit rate = percentage of hotels where we found a booking URL
-        hit_rate = (booking_urls_found / total * 100) if total > 0 else 0
+        # Hit rate = percentage of hotels where we found a booking URL OR contact info
+        hits = booking_urls_found + contact_only_found
+        hit_rate = (hits / total * 100) if total > 0 else 0
         
         logger.info("")
         logger.info("=" * 60)
@@ -1177,6 +1273,7 @@ class DetectorPipeline:
         logger.info(f"Hotels processed:    {total}")
         logger.info(f"Saved to output:      {stats.get('saved', 0)}")
         logger.info(f"Booking URLs found:   {booking_urls_found}")
+        logger.info(f"Contact-only leads:   {contact_only_found}")
         logger.info(f"Known engines:        {known}")
         logger.info(f"Skipped (no result):  {stats.get('skipped_no_result', 0)}")
         logger.info(f"Errors:               {stats['errors']}")
