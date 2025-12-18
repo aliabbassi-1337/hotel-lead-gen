@@ -398,6 +398,11 @@ class BookingButtonFinder:
             "[role='button']:has-text('book now')",
             "div:has-text('book now'):not(:has(div:has-text('book now')))",  # leaf div only
             "span:has-text('book now')",
+            # Brizy and other page builders use custom link elements
+            "[data-brz-link-type] :has-text('book')",
+            ".brz-btn:has-text('book')",
+            "[class*='btn']:has-text('book now')",
+            "[class*='button']:has-text('book now')",
             # General book buttons
             "button:has-text('book')",
             "a:has-text('book'):not([href*='facebook']):not([href*='twitter']):not([href*='instagram']):not([href*='spa']):not([href*='conference'])",
@@ -639,8 +644,8 @@ class BookingButtonFinder:
                     log(f"    [CLICK] Click failed: {str(click_err)[:60]}")
                     continue
                 
-                # No popup - wait for sidebar/modal to appear
-                await asyncio.sleep(0.5)
+                # No popup - wait for JS navigation (Brizy and similar builders need more time)
+                await asyncio.sleep(1.0)
                 
                 # Check if URL changed to an external booking engine
                 if page.url != original_url:
@@ -830,7 +835,7 @@ class HotelProcessor:
         )
         
         if not website:
-            result.error = "no_website"
+            # Not an error - just skip silently (no website to check)
             return result
         
         async with self.semaphore:

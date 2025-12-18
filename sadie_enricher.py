@@ -1,48 +1,31 @@
 #!/usr/bin/env python3
 """
-Sadie Enricher - Find Missing Hotel Websites via DuckDuckGo Search
-===================================================================
-Uses Playwright to search DuckDuckGo for hotels missing websites.
-DuckDuckGo is much more lenient with automated searches (no CAPTCHAs!).
+Sadie Enricher - Find Missing Hotel Websites via Serper.dev
+============================================================
+Uses Serper.dev Google Search API to find websites for hotels.
+Fast, reliable, no CAPTCHAs!
 
 Usage:
+    export SERPER_KEY=your_api_key
     python3 sadie_enricher.py --input hotels.csv --output enriched_hotels.csv
-    python3 sadie_enricher.py --input hotels.csv --concurrency 5 --location "Ocean City MD"
+    python3 sadie_enricher.py --input hotels.csv --location "Ocean City MD"
 """
 
 import csv
 import os
 import sys
 import argparse
-import asyncio
-import random
 import time
-from urllib.parse import urlparse, quote_plus, unquote
-from pathlib import Path
-from dataclasses import dataclass
-from typing import Optional
-
-from playwright.async_api import async_playwright, TimeoutError as PWTimeoutError
+import requests
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 
-DEFAULT_CONCURRENCY = 5  # Number of parallel browser contexts (DuckDuckGo handles more)
-
-# Delays between searches (DuckDuckGo is friendlier, can go faster)
-MIN_DELAY = 0.8
-MAX_DELAY = 1.5
-
-# User agents to rotate
-USER_AGENTS = [
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-]
+DEFAULT_CONCURRENCY = 10  # Serper handles high concurrency well
+SERPER_API_URL = "https://google.serper.dev/search"
 
 # Domains to skip (not real hotel websites)
 SKIP_DOMAINS = [
@@ -56,36 +39,25 @@ SKIP_DOMAINS = [
     "twitter.com", "linkedin.com", "youtube.com", "tiktok.com",
     "wikipedia.org", "wikitravel.org", "waze.com",
     # Vacation rentals
-    "airbnb.com", "vrbo.com", "oyorooms.com", "redawning.com",
-    # Big chains
+    "airbnb.com", "vrbo.com", "oyorooms.com", "redawning.com", "evolve.com",
+    # Big chains (we filter these out anyway)
     "marriott.com", "hilton.com", "ihg.com", "hyatt.com", "wyndham.com",
     "bestwestern.com", "choicehotels.com", "radissonhotels.com",
     # Location-specific junk
     "gatlinburghomesandproperties.com",
+    # Maps/directions
+    "mapquest.com", "maps.apple.com",
+    # Other junk
+    "nextdoor.com", "yellowpages.com", "manta.com", "bbb.org",
 ]
 
-# Progress file to resume from
-PROGRESS_FILE = "enricher_progress.txt"
-
-# Thread-safe counter
+# Stats
 _stats = {"processed": 0, "found": 0}
-_stats_lock = asyncio.Lock()
 
 def log(msg: str):
     """Simple logging with timestamp."""
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] {msg}")
-
-
-def is_valid_hotel_domain(url: str) -> bool:
-    """Check if URL looks like a real hotel website (not an OTA)."""
-    if not url:
-        return False
-    try:
-        domain = urlparse(url).netloc.lower()
-        return not any(skip in domain for skip in SKIP_DOMAINS)
-    except Exception:
-        return False
 
 
 def extract_domain(url: str) -> str:
@@ -96,192 +68,116 @@ def extract_domain(url: str) -> str:
         return ""
 
 
-@dataclass
-class SearchResult:
-    """Result of a DuckDuckGo search."""
-    hotel_name: str
-    website: str
-    success: bool
-    captcha: bool = False
+def is_valid_hotel_domain(url: str) -> bool:
+    """Check if URL looks like a real hotel website (not an OTA)."""
+    if not url:
+        return False
+    try:
+        # Skip file downloads
+        lower_url = url.lower()
+        bad_extensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.zip', '.jpg', '.png', '.gif']
+        if any(lower_url.endswith(ext) for ext in bad_extensions):
+            return False
+        
+        # Skip government sites
+        if '.gov' in lower_url or '.edu' in lower_url:
+            return False
+        
+        domain = extract_domain(url)
+        return not any(skip in domain for skip in SKIP_DOMAINS)
+    except Exception:
+        return False
 
 
-_debug_mode = False
-
-async def search_duckduckgo(page, hotel_name: str, location: str = "") -> SearchResult:
+def search_serper(hotel_name: str, location: str, api_key: str, debug: bool = False) -> str:
     """
-    Search DuckDuckGo HTML version for a hotel's official website.
-    Uses the lite/HTML version which doesn't need JavaScript rendering.
+    Search Google via Serper.dev for a hotel's official website.
+    Returns the website URL or empty string if not found.
     """
-    # Build search query
     query = f'{hotel_name}'
     if location:
         query += f" {location}"
     query += " hotel official website"
     
-    # Use DuckDuckGo HTML version - no JavaScript needed, much more reliable
-    search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+    if debug:
+        log(f"    [SEARCH] Query: {query[:60]}...")
     
     try:
-        await page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
-        await asyncio.sleep(0.5)
+        response = requests.post(
+            SERPER_API_URL,
+            headers={
+                "X-API-KEY": api_key,
+                "Content-Type": "application/json"
+            },
+            json={"q": query, "num": 10},
+            timeout=15
+        )
         
-        # Try multiple selectors for DuckDuckGo HTML results
-        selectors_to_try = [
-            "a.result__a",
-            ".result__title a",
-            ".results a[href*='http']",
-            "a.result-link",
-            "#links a[href*='http']",
-        ]
+        if response.status_code != 200:
+            if debug:
+                log(f"    [SEARCH] API error: {response.status_code} - {response.text[:100]}")
+            return ""
         
-        all_results = []
-        for selector in selectors_to_try:
-            results = await page.locator(selector).all()
-            if results:
-                all_results = results
-                if _debug_mode:
-                    log(f"    [DEBUG] Found {len(results)} results with selector: {selector}")
-                break
+        data = response.json()
         
-        if not all_results and _debug_mode:
-            # Debug: dump page content
-            content = await page.content()
-            log(f"    [DEBUG] No results found. Page length: {len(content)}")
-            if "robot" in content.lower() or "captcha" in content.lower():
-                log(f"    [DEBUG] Possible bot detection!")
-            # Check what's on the page
-            all_links = await page.locator("a[href]").all()
-            log(f"    [DEBUG] Total links on page: {len(all_links)}")
+        # Check organic results
+        organic = data.get("organic", [])
+        if debug:
+            log(f"    [SEARCH] Got {len(organic)} organic results")
         
-        for result in all_results[:10]:
-            try:
-                href = await result.get_attribute("href")
-                if not href:
-                    continue
-                
-                if _debug_mode:
-                    log(f"    [DEBUG] Raw href: {href[:80]}...")
-                
-                # DuckDuckGo HTML wraps URLs - extract actual URL
-                # Format: //duckduckgo.com/l/?uddg=ENCODED_URL&...
-                if "//duckduckgo.com/l/" in href and "uddg=" in href:
-                    # Extract the uddg parameter
-                    uddg_start = href.find("uddg=") + 5
-                    uddg_end = href.find("&", uddg_start)
-                    if uddg_end == -1:
-                        uddg_end = len(href)
-                    href = unquote(href[uddg_start:uddg_end])
-                    if _debug_mode:
-                        log(f"    [DEBUG] Decoded URL: {href[:80]}...")
-                
-                # Skip internal links
-                if href.startswith("/") or "duckduckgo.com" in href:
-                    continue
-                
-                # Check if it's a valid hotel domain
-                if is_valid_hotel_domain(href):
-                    return SearchResult(hotel_name, href, True)
-                elif _debug_mode:
-                    log(f"    [DEBUG] Skipped (OTA/social): {extract_domain(href)}")
-                    
-            except Exception as e:
-                if _debug_mode:
-                    log(f"    [DEBUG] Error processing result: {e}")
-                continue
+        for i, result in enumerate(organic[:10]):
+            link = result.get("link", "")
+            title = result.get("title", "")[:40]
+            
+            if debug:
+                log(f"    [RESULT {i}] '{title}' -> {link[:50]}...")
+            
+            if is_valid_hotel_domain(link):
+                if debug:
+                    log(f"    [RESULT {i}] ✓ VALID: {extract_domain(link)}")
+                return link
+            elif debug:
+                log(f"    [RESULT {i}] ✗ Blocked: {extract_domain(link)}")
         
-        return SearchResult(hotel_name, "", False)
+        if debug:
+            log(f"    [SEARCH] No valid website found")
+        return ""
         
-    except PWTimeoutError:
-        return SearchResult(hotel_name, "", False)
+    except requests.Timeout:
+        if debug:
+            log(f"    [SEARCH] Timeout")
+        return ""
     except Exception as e:
-        if _debug_mode:
-            log(f"    [DEBUG] Search error: {e}")
-        return SearchResult(hotel_name, "", False)
+        if debug:
+            log(f"    [SEARCH] Error: {e}")
+        return ""
 
 
-async def worker(
-    worker_id: int,
-    browser,
-    queue: asyncio.Queue,
-    results: dict,
-    location: str,
-    progress_file: str,
-    headed: bool,
-):
-    """Worker that processes hotels from the queue."""
-    context = await browser.new_context(
-        user_agent=random.choice(USER_AGENTS),
-        viewport={"width": 1280, "height": 800},
-    )
-    page = await context.new_page()
+def process_hotel(hotel: dict, location: str, api_key: str, debug: bool) -> tuple:
+    """Process a single hotel, return (hotel_name, website_found)."""
+    hotel_name = hotel.get("hotel", "")
+    if not hotel_name:
+        return (None, None)
     
-    searches_count = 0
+    website = search_serper(hotel_name, location, api_key, debug)
     
-    try:
-        while True:
-            try:
-                # Get next hotel from queue (with timeout to allow clean shutdown)
-                hotel = await asyncio.wait_for(queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                if queue.empty():
-                    break
-                continue
-            
-            hotel_name = hotel.get("hotel", "")
-            if not hotel_name:
-                queue.task_done()
-                continue
-            
-            # Search DuckDuckGo (no CAPTCHAs!)
-            result = await search_duckduckgo(page, hotel_name, location)
-            
-            async with _stats_lock:
-                _stats["processed"] += 1
-            
-            if result.success:
-                hotel["website"] = result.website
-                results[hotel_name] = result.website
-                async with _stats_lock:
-                    _stats["found"] += 1
-                log(f"  [W{worker_id}] ✓ {hotel_name[:30]} -> {extract_domain(result.website)}")
-            else:
-                log(f"  [W{worker_id}] ✗ {hotel_name[:30]}")
-            
-            # Save progress
-            with open(progress_file, "a") as f:
-                f.write(f"{hotel_name}\n")
-            
-            # Random delay
-            delay = random.uniform(MIN_DELAY, MAX_DELAY)
-            await asyncio.sleep(delay)
-            
-            # Rotate user agent occasionally (DuckDuckGo is friendlier, less frequent needed)
-            searches_count += 1
-            if searches_count % 50 == 0:
-                await context.close()
-                context = await browser.new_context(
-                    user_agent=random.choice(USER_AGENTS),
-                    viewport={"width": 1280, "height": 800},
-                )
-                page = await context.new_page()
-            
-            queue.task_done()
-            
-    finally:
-        try:
-            await context.close()
-        except Exception:
-            pass  # Context may already be closed
+    if website:
+        log(f"  ✓ {hotel_name[:35]} -> {extract_domain(website)}")
+    else:
+        log(f"  ✗ {hotel_name[:35]}")
+    
+    return (hotel_name, website)
 
 
-async def enrich_hotels(
+def enrich_hotels(
     input_csv: str,
     output_csv: str,
     location: str = "",
-    headed: bool = False,
     concurrency: int = DEFAULT_CONCURRENCY,
+    api_key: str = "",
+    debug: bool = False,
 ):
-    """Main enrichment loop with concurrent workers."""
+    """Main enrichment with concurrent API calls."""
     
     # Load input CSV
     hotels = []
@@ -306,57 +202,29 @@ async def enrich_hotels(
         log("All hotels already have websites!")
         return
     
-    # Load progress (already processed hotels)
-    processed = set()
-    if os.path.exists(PROGRESS_FILE):
-        with open(PROGRESS_FILE, "r") as f:
-            processed = set(line.strip() for line in f)
-        log(f"Resuming: {len(processed)} already processed")
-    
-    # Filter out already processed
-    to_process = [h for h in missing_website if h.get("hotel", "") not in processed]
-    log(f"  - {len(to_process)} remaining to process")
     log(f"  - Using {concurrency} concurrent workers")
+    log("")
     
-    if not to_process:
-        log("All hotels already processed!")
-        _write_output(hotels, output_csv, fieldnames)
-        return
-    
-    # Reset stats
     global _stats
     _stats = {"processed": 0, "found": 0}
     
     start_time = time.time()
-    
-    # Create queue and results dict
-    queue = asyncio.Queue()
     results = {}
     
-    # Add hotels to queue
-    for hotel in to_process:
-        await queue.put(hotel)
-    
-    # Start browser and workers
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=not headed)
+    # Process with thread pool
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = {
+            executor.submit(process_hotel, hotel, location, api_key, debug): hotel
+            for hotel in missing_website
+        }
         
-        # Create worker tasks
-        workers = [
-            asyncio.create_task(
-                worker(i + 1, browser, queue, results, location, PROGRESS_FILE, headed)
-            )
-            for i in range(min(concurrency, len(to_process)))
-        ]
-        
-        # Wait for queue to be processed
-        await queue.join()
-        
-        # Cancel workers
-        for w in workers:
-            w.cancel()
-        
-        await browser.close()
+        for future in as_completed(futures):
+            hotel_name, website = future.result()
+            _stats["processed"] += 1
+            
+            if hotel_name and website:
+                results[hotel_name] = website
+                _stats["found"] += 1
     
     elapsed = time.time() - start_time
     
@@ -367,7 +235,18 @@ async def enrich_hotels(
             hotel["website"] = results[hotel_name]
     
     # Write enriched output
-    _write_output(hotels, output_csv, fieldnames)
+    output_dir = os.path.dirname(output_csv)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    
+    with open(output_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+        writer.writeheader()
+        # Filter out any None keys from dicts
+        clean_hotels = []
+        for h in hotels:
+            clean_hotels.append({k: v for k, v in h.items() if k is not None})
+        writer.writerows(clean_hotels)
     
     # Summary
     log("")
@@ -377,46 +256,30 @@ async def enrich_hotels(
     log(f"Hotels processed:  {_stats['processed']}")
     log(f"Websites found:    {_stats['found']}")
     log(f"Hit rate:          {_stats['found']/max(_stats['processed'],1)*100:.1f}%")
-    log(f"Time elapsed:      {elapsed/60:.1f} minutes")
-    log(f"Speed:             {_stats['processed']/max(elapsed,1)*60:.1f} hotels/min")
+    log(f"Time elapsed:      {elapsed:.1f} seconds")
+    log(f"Speed:             {_stats['processed']/max(elapsed,1):.1f} hotels/sec")
     log(f"Output:            {output_csv}")
     log("=" * 60)
-    
-    # Clean up progress file
-    if os.path.exists(PROGRESS_FILE):
-        os.remove(PROGRESS_FILE)
-
-
-def _write_output(hotels: list, output_csv: str, fieldnames: list):
-    """Write enriched hotels to CSV."""
-    # Create output directory if needed
-    output_dir = os.path.dirname(output_csv)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
-    
-    with open(output_csv, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(hotels)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Enrich hotel data with missing websites via Google Search")
+    parser = argparse.ArgumentParser(description="Enrich hotel data with missing websites via Serper.dev")
     parser.add_argument("--input", "-i", required=True, help="Input CSV file with hotels")
     parser.add_argument("--output", "-o", help="Output CSV file (default: input file with _enriched suffix)")
     parser.add_argument("--location", "-l", default="", help="Location hint for search (e.g., 'Ocean City MD')")
-    parser.add_argument("--headed", action="store_true", help="Run browser in headed mode (visible)")
     parser.add_argument("--concurrency", "-c", type=int, default=DEFAULT_CONCURRENCY, 
-                        help=f"Number of concurrent workers (default: {DEFAULT_CONCURRENCY})")
-    parser.add_argument("--debug", action="store_true", help="Run browser in headed mode (visible) for debugging")
+                        help=f"Number of concurrent API calls (default: {DEFAULT_CONCURRENCY})")
+    parser.add_argument("--debug", action="store_true", help="Show detailed search results")
     
     args = parser.parse_args()
     
-    # --debug implies headed mode and verbose logging
-    if args.debug:
-        args.headed = True
-        global _debug_mode
-        _debug_mode = True
+    # Get API key from environment
+    api_key = os.environ.get("SERPER_KEY", "")
+    if not api_key:
+        print("Error: SERPER_KEY environment variable not set")
+        print("Get your API key from https://serper.dev and run:")
+        print("  export SERPER_KEY=your_api_key")
+        sys.exit(1)
     
     if not os.path.exists(args.input):
         print(f"Error: Input file not found: {args.input}")
@@ -427,14 +290,14 @@ def main():
         base = os.path.splitext(args.input)[0]
         output = f"{base}_enriched.csv"
     
-    log("Sadie Enricher - DuckDuckGo Website Finder")
+    log("Sadie Enricher - Serper.dev Website Finder")
     log(f"Input:       {args.input}")
     log(f"Output:      {output}")
     log(f"Location:    {args.location or '(none)'}")
     log(f"Concurrency: {args.concurrency}")
     log("")
     
-    asyncio.run(enrich_hotels(args.input, output, args.location, args.headed, args.concurrency))
+    enrich_hotels(args.input, output, args.location, args.concurrency, api_key, args.debug)
 
 
 if __name__ == "__main__":
