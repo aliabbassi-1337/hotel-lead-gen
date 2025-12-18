@@ -46,13 +46,22 @@ USER_AGENTS = [
 
 # Domains to skip (not real hotel websites)
 SKIP_DOMAINS = [
+    # OTAs
     "booking.com", "expedia.com", "hotels.com", "tripadvisor.com",
     "kayak.com", "trivago.com", "priceline.com", "agoda.com",
+    "orbitz.com", "travelocity.com", "hotwire.com", "cheaptickets.com",
+    "trip.com", "makemytrip.com", "goibibo.com", "hostelworld.com",
+    # Social / Info
     "google.com", "yelp.com", "facebook.com", "instagram.com",
     "twitter.com", "linkedin.com", "youtube.com", "tiktok.com",
-    "wikipedia.org", "wikitravel.org", "airbnb.com", "vrbo.com",
+    "wikipedia.org", "wikitravel.org", "waze.com",
+    # Vacation rentals
+    "airbnb.com", "vrbo.com", "oyorooms.com", "redawning.com",
+    # Big chains
     "marriott.com", "hilton.com", "ihg.com", "hyatt.com", "wyndham.com",
-    "oyorooms.com", "redawning.com",
+    "bestwestern.com", "choicehotels.com", "radissonhotels.com",
+    # Location-specific junk
+    "gatlinburghomesandproperties.com",
 ]
 
 # Progress file to resume from

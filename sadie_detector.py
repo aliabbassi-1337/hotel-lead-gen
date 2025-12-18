@@ -1070,25 +1070,38 @@ class DetectorPipeline:
         return hotels
     
     def _filter_processed(self, hotels: list[dict]) -> tuple[list[dict], bool]:
-        """Filter out already-processed hotels. Returns (remaining, append_mode)."""
+        """Filter out already-processed hotels. Returns (remaining, append_mode).
+        
+        Hotels with errors are NOT filtered out - they can be retried.
+        """
         if not os.path.exists(self.config.output_csv):
             return hotels, False
         
-        processed = set()
+        # Read existing results, separating successful from failed
+        processed_success = set()
+        processed_errors = set()
+        
         with open(self.config.output_csv, newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 row_name = row.get("name") or row.get("hotel", "")
                 key = (row_name, normalize_url(row.get("website", "")))
-                processed.add(key)
+                
+                # Check if this row had an error
+                error = row.get("error", "").strip()
+                if error:
+                    processed_errors.add(key)
+                else:
+                    processed_success.add(key)
         
-        if not processed:
+        if not processed_success and not processed_errors:
             return hotels, False
         
-        log(f"Found {len(processed)} already processed, will skip them")
+        log(f"Found {len(processed_success)} successful, {len(processed_errors)} with errors (will retry)")
         
+        # Only skip successfully processed hotels - errors can be retried
         remaining = [
             h for h in hotels
-            if ((h.get("name") or h.get("hotel", "")), normalize_url(h.get("website", ""))) not in processed
+            if ((h.get("name") or h.get("hotel", "")), normalize_url(h.get("website", ""))) not in processed_success
         ]
         return remaining, True
     
@@ -1125,9 +1138,12 @@ class DetectorPipeline:
                     stats["booking_url_found"] += 1
                 
                 # Only save if we found a booking URL or a known engine
-                has_known_engine = result.booking_engine not in ("unknown", "unknown_third_party", "proprietary_or_same_domain")
+                has_known_engine = result.booking_engine and result.booking_engine not in ("", "unknown", "unknown_third_party", "proprietary_or_same_domain")
                 
-                if has_booking_url or has_known_engine:
+                # Also save errors so we can track/retry them
+                has_error = bool(result.error)
+                
+                if has_booking_url or has_known_engine or has_error:
                     writer.writerow(asdict(result))
                     f.flush()
                     stats["saved"] += 1
