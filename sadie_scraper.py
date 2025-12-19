@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """
-Sadie Scraper - Google Places API Hotel Scraper
-================================================
+Sadie Scraper - Google Places API Hotel Scraper (Cost-Optimized)
+================================================================
 Scrapes hotels from Google Places API by geographic area.
-Filters out OTAs, apartments, and bad leads.
+Filters out apartments and bad leads.
 Uses concurrent API calls for speed.
+
+COST OPTIMIZATIONS:
+- 4x4 grid (16 centers) instead of larger grids
+- Only uses type=lodging search (most hotels appear here)
+- Max 1 page per search (no pagination)
+- NO Place Details API calls - Enricher finds websites via Serper
+
+This reduces Google Places API costs by ~90% compared to full search.
 
 Usage:
     python3 sadie_scraper.py --center-lat 25.7617 --center-lng -80.1918 --overall-radius-km 35
@@ -20,10 +28,8 @@ import math
 import time
 import argparse
 from datetime import datetime
-from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
-from typing import Optional
 
 import requests
 from dotenv import load_dotenv
@@ -36,28 +42,14 @@ from dotenv import load_dotenv
 DEFAULT_CENTER_LAT = 25.7617
 DEFAULT_CENTER_LNG = -80.1918
 DEFAULT_OVERALL_RADIUS_KM = 35.0
-DEFAULT_GRID_ROWS = 5
-DEFAULT_GRID_COLS = 5
-DEFAULT_MAX_PAGES_PER_CENTER = 3
+DEFAULT_GRID_ROWS = 4  # Reduced from 5 to 4 for cost savings
+DEFAULT_GRID_COLS = 4  # Reduced from 5 to 4 for cost savings
+DEFAULT_MAX_PAGES_PER_CENTER = 1  # Reduced from 3 to 1 for cost savings
 DEFAULT_CONCURRENCY = 15  # Parallel API calls
 
 OUTPUT_DIR = "hotel_scraper_output"
 OUTPUT_CSV = os.path.join(OUTPUT_DIR, "hotels_scraped.csv")
 LOG_FILE = "sadie_scraper.log"
-
-# OTA domains to skip
-OTA_DOMAINS_BLACKLIST = [
-    "booking.com", "expedia.com", "hotels.com", "airbnb.com",
-    "tripadvisor.com", "priceline.com", "agoda.com", "orbitz.com",
-    "kayak.com", "travelocity.com", "hostelworld.com", "vrbo.com",
-    "ebookers.com", "lastminute.com", "trivago.com", "hotwire.com", "travelzoo.com",
-]
-
-# Big hotel chains to skip - they have their own booking systems, not good leads
-SKIP_CHAIN_DOMAINS = [
-    "marriott.com", "hilton.com", "ihg.com", "hyatt.com", "wyndham.com",
-    "choicehotels.com", "bestwestern.com", "radissonhotels.com", "accor.com",
-]
 
 # Bad lead keywords
 BAD_LEAD_KEYWORDS = [
@@ -72,14 +64,10 @@ BAD_LEAD_KEYWORDS = [
     "event venue", "wedding venue", "banquet hall", "conference center",
 ]
 
-# Search modes
+# Search modes - Reduced to just lodging type for cost savings
+# Most hotels appear in the lodging type, saving ~80% on search calls
 SEARCH_MODES = [
     {"label": "lodging_type", "type": "lodging", "keyword": None},
-    {"label": "hotel_keyword", "type": None, "keyword": "hotel"},
-    {"label": "motel_keyword", "type": None, "keyword": "motel"},
-    {"label": "resort_keyword", "type": None, "keyword": "resort"},
-    {"label": "inn_keyword", "type": None, "keyword": "inn"},
-    {"label": "boutique_hotel", "type": None, "keyword": "boutique hotel"},
 ]
 
 
@@ -108,40 +96,10 @@ def log(msg: str) -> None:
 # Helpers
 # ------------------------------------------------------------
 
-def extract_domain(url: str) -> str:
-    if not url:
-        return ""
-    try:
-        parsed = urlparse(url)
-        host = (parsed.netloc or "").lower()
-        if host.startswith("www."):
-            host = host[4:]
-        return host
-    except Exception:
-        return ""
-
-
-def is_ota_domain(website: str) -> bool:
-    domain = extract_domain(website)
-    for ota in OTA_DOMAINS_BLACKLIST:
-        if domain.endswith(ota):
-            return True
-    return False
-
-
 def is_bad_lead(name: str, website: str = "") -> bool:
     text = f"{name} {website}".lower()
     for kw in BAD_LEAD_KEYWORDS:
         if kw in text:
-            return True
-    return False
-
-
-def is_big_chain(website: str) -> bool:
-    """Check if website belongs to a big hotel chain."""
-    domain = extract_domain(website)
-    for chain in SKIP_CHAIN_DOMAINS:
-        if chain in domain.lower():
             return True
     return False
 
@@ -197,44 +155,17 @@ def places_nearby(api_key, lat, lng, radius_m, place_type=None, keyword=None, pa
     return resp.json()
 
 
-def place_details(api_key, place_id):
-    url = "https://maps.googleapis.com/maps/api/place/details/json"
-    params = {
-        "key": api_key,
-        "place_id": place_id,
-        "fields": "name,geometry,website,business_status,formatted_phone_number,international_phone_number,rating,user_ratings_total,formatted_address,types",
-    }
-    resp = requests.get(url, params=params, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
+# Place Details API function removed - not used for cost savings
+# Enricher will find websites via Serper instead
 
 
 # ------------------------------------------------------------
 # Concurrent Processing
 # ------------------------------------------------------------
 
-def fetch_place_details_batch(api_key: str, place_ids: list, max_workers: int = 15) -> dict:
-    """Fetch place details concurrently."""
-    results = {}
-    
-    def fetch_one(place_id):
-        try:
-            return place_id, place_details(api_key, place_id)
-        except Exception as e:
-            return place_id, {"status": "ERROR", "error": str(e)}
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(fetch_one, pid): pid for pid in place_ids}
-        for future in as_completed(futures):
-            place_id, details = future.result()
-            results[place_id] = details
-    
-    return results
-
-
 def search_center(api_key: str, lat: float, lng: float, radius_m: int, 
                   max_pages: int, seen_place_ids: set, lock: Lock) -> list:
-    """Search all modes for a single center. Returns list of (place_id, name) tuples."""
+    """Search all modes for a single center. Returns list of place data dicts with name, place_id, lat, lng."""
     results = []
     
     for mode in SEARCH_MODES:
@@ -262,6 +193,7 @@ def search_center(api_key: str, lat: float, lng: float, radius_m: int,
             for r in places:
                 place_id = r.get("place_id")
                 name = r.get("name", "").strip()
+                geometry = r.get("geometry", {}).get("location", {})
                 
                 if not place_id or not name:
                     continue
@@ -271,12 +203,19 @@ def search_center(api_key: str, lat: float, lng: float, radius_m: int,
                         continue
                     seen_place_ids.add(place_id)
                 
-                results.append((place_id, name))
+                # Extract data directly from Nearby Search (no Place Details needed)
+                results.append({
+                    "place_id": place_id,
+                    "name": name,
+                    "lat": geometry.get("lat", ""),
+                    "lng": geometry.get("lng", ""),
+                })
             
             page_token = nearby.get("next_page_token")
             if not page_token:
                 break
-            time.sleep(2.0)  # Required by Google for pagination
+            if max_pages > 1:  # Only sleep if we're doing pagination
+                time.sleep(2.0)  # Required by Google for pagination
     
     return results
 
@@ -311,9 +250,9 @@ def run_scraper(
     
     seen_place_ids = set()
     seen_lock = Lock()
-    place_ids_to_fetch = []
+    all_places = []
     hotels = []
-    stats = {"candidates": 0, "kept": 0, "no_website": 0, "ota": 0, "bad_lead": 0, "big_chain": 0, "duplicates": 0, "existing": 0}
+    stats = {"candidates": 0, "kept": 0, "bad_lead": 0, "duplicates": 0, "existing": 0}
     
     # Load existing hotels from output file to avoid duplicates across runs
     existing_hotels = {}
@@ -322,16 +261,21 @@ def run_scraper(
             with open(output_csv, "r", newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    key = (row.get("hotel", "").strip().lower(), row.get("website", "").strip().lower())
-                    if key[0]:
+                    # Use hotel name + lat/lng as key (since we don't have website yet)
+                    name = row.get("hotel", "").strip().lower()
+                    lat = row.get("lat", "").strip()
+                    lng = row.get("long", "").strip()
+                    key = (name, lat, lng)
+                    if name:
                         existing_hotels[key] = row
             if existing_hotels:
                 log(f"Loaded {len(existing_hotels)} existing hotels from {output_csv}")
         except Exception as e:
             log(f"Warning: Could not read existing file: {e}")
     
-    # Phase 1: Search all centers concurrently
+    # Phase 1: Search all centers concurrently (no Place Details needed - cost savings!)
     log(f"\nPhase 1: Searching {len(centers)} grid centers...")
+    log("  NOTE: Skipping Place Details API calls - Enricher will find websites via Serper")
     start_time = time.time()
     
     with ThreadPoolExecutor(max_workers=min(concurrency, len(centers))) as executor:
@@ -347,77 +291,45 @@ def run_scraper(
             center_idx, lat, lng = futures[future]
             try:
                 results = future.result()
-                place_ids_to_fetch.extend(results)
+                all_places.extend(results)
                 log(f"  Center {center_idx}/{len(centers)}: {len(results)} places found")
             except Exception as e:
                 log(f"  Center {center_idx} error: {e}")
     
     search_time = time.time() - start_time
-    log(f"  Search complete: {len(place_ids_to_fetch)} unique places in {search_time:.1f}s")
+    log(f"  Search complete: {len(all_places)} unique places in {search_time:.1f}s")
     
-    # Phase 2: Fetch all place details concurrently
-    if place_ids_to_fetch:
-        log(f"\nPhase 2: Fetching details for {len(place_ids_to_fetch)} places...")
-        start_time = time.time()
-        
-        place_id_map = {pid: name for pid, name in place_ids_to_fetch}
-        place_ids = [pid for pid, _ in place_ids_to_fetch]
-        
-        # Fetch in batches
-        batch_size = 100
-        all_details = {}
-        for i in range(0, len(place_ids), batch_size):
-            batch = place_ids[i:i+batch_size]
-            batch_details = fetch_place_details_batch(api_key, batch, max_workers=concurrency)
-            all_details.update(batch_details)
-            log(f"  Fetched {min(i+batch_size, len(place_ids))}/{len(place_ids)} details")
-        
-        fetch_time = time.time() - start_time
-        log(f"  Fetch complete in {fetch_time:.1f}s")
-        
-        # Phase 3: Process all fetched details
-        log(f"\nPhase 3: Processing results...")
-        for place_id, details in all_details.items():
-            if details.get("status") != "OK":
-                continue
+    # Phase 2: Process results directly from Nearby Search (no Place Details API calls)
+    if all_places:
+        log(f"\nPhase 2: Processing {len(all_places)} places...")
+        for place in all_places:
+            name = place.get("name", "").strip()
+            lat = place.get("lat", "")
+            lng = place.get("lng", "")
             
-            name = place_id_map.get(place_id, "")
-            result = details.get("result", {})
-            website = (result.get("website") or "").strip()
+            if not name:
+                continue
             
             stats["candidates"] += 1
             
-            # Keep hotels without websites for later enrichment
-            if not website:
-                stats["no_website"] += 1
-            
-            if is_ota_domain(website):
-                stats["ota"] += 1
-                continue
-            
-            if is_big_chain(website):
-                stats["big_chain"] += 1
-                continue
-            
-            if is_bad_lead(name, website):
+            # Filter bad leads based on name only (no website available yet)
+            if is_bad_lead(name, ""):
                 stats["bad_lead"] += 1
                 continue
             
-            geometry = result.get("geometry", {}).get("location", {})
-            phone = result.get("international_phone_number") or result.get("formatted_phone_number", "")
-            
             # Check if this hotel already exists in output file
-            key = (name.lower(), website.lower())
+            key = (name.lower(), str(lat), str(lng))
             if key in existing_hotels:
                 stats["existing"] += 1
                 continue
             
+            # Add hotel with empty website/phone - Enricher will fill these
             hotels.append({
                 "hotel": name,
-                "website": website,
-                "phone": phone,
-                "lat": geometry.get("lat", ""),
-                "long": geometry.get("lng", ""),
+                "website": "",  # Enricher will find via Serper
+                "phone": "",     # Enricher will find via Serper
+                "lat": lat,
+                "long": lng,
             })
             stats["kept"] += 1
             
@@ -444,8 +356,8 @@ def run_scraper(
     log(f"Candidates found: {stats['candidates']}")
     log(f"New hotels added: {stats['kept']}")
     log(f"Already existed:  {stats['existing']}")
-    log(f"Without website:  {stats['no_website']} (kept for enrichment)")
-    log(f"Skipped: {stats['ota']} OTA, {stats['big_chain']} big chains, {stats['bad_lead']} bad leads")
+    log(f"Skipped: {stats['bad_lead']} bad leads (filtered by name)")
+    log(f"NOTE: Website/phone fields empty - Enricher will find via Serper")
     if all_hotels:
         log(f"Total in file:    {len(all_hotels)}")
     log(f"Output: {output_csv}")
