@@ -106,27 +106,19 @@ def analyze_csv(filepath: str):
     # ========================================================================
     tier1_leads = []  # Has booking URL + known engine
     tier2_leads = []  # Has booking URL + unknown engine
-    tier3_leads = []  # Contact only (phone/email, no booking)
-    tier4_leads = []  # Has website but no booking/contact
-    tier5_leads = []  # No website at all
+    tier3_leads = []  # No booking URL
     
     for r in rows:
         has_booking = bool(r.get("booking_url", "").strip())
         engine = r.get("booking_engine", "")
-        is_known = engine and engine not in ["unknown", "unknown_third_party", "contact_only", "proprietary_or_same_domain"]
-        has_contact = bool(r.get("phone_google") or r.get("phone_website") or r.get("email"))
-        has_site = bool(r.get("website", "").strip())
+        is_known = engine and engine not in ["unknown", "unknown_third_party", "unknown_booking_api", "contact_only", "proprietary_or_same_domain"]
         
         if has_booking and is_known:
             tier1_leads.append(r)
         elif has_booking:
             tier2_leads.append(r)
-        elif engine == "contact_only" or (has_contact and not has_booking):
-            tier3_leads.append(r)
-        elif has_site:
-            tier4_leads.append(r)
         else:
-            tier5_leads.append(r)
+            tier3_leads.append(r)
     
     # ========================================================================
     # PRINT REPORT
@@ -148,9 +140,7 @@ def analyze_csv(filepath: str):
     print("\nLEAD QUALITY TIERS")
     print(f"Tier 1 (Booking + Known Engine): {len(tier1_leads):,} ({len(tier1_leads)/total*100:.1f}%)")
     print(f"Tier 2 (Booking + Unknown Engine): {len(tier2_leads):,} ({len(tier2_leads)/total*100:.1f}%)")
-    print(f"Tier 3 (Contact Only): {len(tier3_leads):,} ({len(tier3_leads)/total*100:.1f}%)")
-    print(f"Tier 4 (Website, No Booking): {len(tier4_leads):,} ({len(tier4_leads)/total*100:.1f}%)")
-    print(f"Tier 5 (No Website): {len(tier5_leads):,} ({len(tier5_leads)/total*100:.1f}%)")
+    print(f"Tier 3 (No Booking): {len(tier3_leads):,} ({len(tier3_leads)/total*100:.1f}%)")
     
     # Booking Engines
     print("\nBOOKING ENGINES")
@@ -198,9 +188,9 @@ def analyze_csv(filepath: str):
     print(f"With screenshot: {len(has_screenshot):,} ({len(has_screenshot)/total*100:.1f}%)")
     
     # Summary
-    actionable = len(tier1_leads) + len(tier2_leads) + len(tier3_leads)
+    actionable = len(tier1_leads) + len(tier2_leads)
     print("\n" + "=" * 50)
-    print(f"ACTIONABLE LEADS (Tier 1-3): {actionable:,} ({actionable/total*100:.1f}%)")
+    print(f"ACTIONABLE LEADS (Tier 1-2): {actionable:,} ({actionable/total*100:.1f}%)")
     print("=" * 50 + "\n")
 
 

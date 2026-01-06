@@ -26,11 +26,7 @@ PARALLEL_JOBS=${PARALLEL:-3}
 # SerpAPI: 100 free queries/month per account - https://serpapi.com
 
 SERPER_KEYS=(
-    "c2033c70599227fdfd4078555bf6b608c9e82fd0"
-    "a4428a317fb3c9d6443a81683a9113808ea08aa3"
     "9e76b3ae45f15107b6ccf7419b07cbd01eb6e915"
-    "a14adcdd03fa71ebeab0678d8f1b5bde1f93b100",
-    "82a942cea732ef53bcd34fee1109fb27905a061c"
 )
 
 SERPAPI_KEYS=(
@@ -45,18 +41,47 @@ SERPAPI_KEYS=(
 #   sydney_queries_optimized.txt - 656 queries, balanced
 #   sydney_queries_expanded.txt  - 1,222 queries, all suburbs
 #   sydney_queries.txt           - 613 queries, original list
-QUERY_FILE="sydney_queries_heavy.txt"
+QUERY_FILE="sydney_queries_retry.txt"
 
 # -----------------------------------------------------------------------------
-# OUTPUT DIRECTORY (timestamped to avoid overwriting)
+# OUTPUT DIRECTORY (resume from existing or create new)
 # -----------------------------------------------------------------------------
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-OUTPUT_DIR="scraper_output/sydney_multi_${TIMESTAMP}"
+# Pass existing dir as argument to resume: ./run_sydney_multi.sh scraper_output/sydney_multi_20251220_185243
+if [[ -n "$1" && -d "$1" ]]; then
+    OUTPUT_DIR="$1"
+    echo "RESUMING from: $OUTPUT_DIR"
+else
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    OUTPUT_DIR="scraper_output/sydney_multi_${TIMESTAMP}"
+fi
 
 # Create output dir and failed log
 mkdir -p "$OUTPUT_DIR"
 FAILED_LOG="$OUTPUT_DIR/failed_queries.log"
 touch "$FAILED_LOG"
+
+# -----------------------------------------------------------------------------
+# BUILD SET OF ALREADY-COMPLETED QUERIES (check ALL sydney_multi* dirs)
+# -----------------------------------------------------------------------------
+echo "Scanning for completed queries..."
+COMPLETED_SET=""
+for dir in scraper_output/sydney_multi*; do
+    if [[ -d "$dir" ]]; then
+        # Use nullglob-style check to handle empty directories
+        csv_files=("$dir"/*.csv(N))
+        for f in "${csv_files[@]}"; do
+            if [[ -f "$f" ]]; then
+                # Only count as complete if file has more than header
+                lines=$(wc -l < "$f" 2>/dev/null | tr -d ' ')
+                if [[ $lines -gt 1 ]]; then
+                    basename="${f##*/}"
+                    name="${basename%.csv}"
+                    COMPLETED_SET="$COMPLETED_SET|$name|"
+                fi
+            fi
+        done
+    fi
+done
 
 # Read queries from file (skip comments and empty lines)
 # Works with zsh and bash 4+
@@ -125,12 +150,24 @@ echo ""
 key_count=${#ALL_KEYS[@]}
 query_count=${#QUERIES[@]}
 
-# Track running jobs
-running_jobs=0
+# Track progress
+skipped_count=0
+processed_count=0
 
 # Use integer index for zsh compatibility
 for (( i=1; i<=${#QUERIES[@]}; i++ )); do
     query="${QUERIES[$i]}"
+    
+    # Create safe filename from query
+    safe_name=$(echo "$query" | tr ' ' '_' | tr -cd '[:alnum:]_')
+    
+    # SKIP if already completed in ANY previous run
+    if [[ "$COMPLETED_SET" == *"|$safe_name|"* ]]; then
+        ((skipped_count++))
+        continue
+    fi
+    
+    ((processed_count++))
     
     # Round-robin key selection
     key_index=$(( (i-1) % key_count + 1 ))
@@ -138,57 +175,40 @@ for (( i=1; i<=${#QUERIES[@]}; i++ )); do
     provider="${key_info%%:*}"
     api_key="${key_info#*:}"
     
-    # Create safe filename from query
-    safe_name=$(echo "$query" | tr ' ' '_' | tr -cd '[:alnum:]_')
     output_file="$OUTPUT_DIR/${safe_name}.csv"
     
-    # Run scraper in background (inline, not function)
-    (
-        if [[ "$provider" == "serper" ]]; then
-            python3 sadie_scraper_serper.py \
-                --query "$query" \
-                --api-key "$api_key" \
-                --no-neighborhoods \
-                --output "$output_file" >/dev/null 2>&1
-        else
-            python3 sadie_scraper_serpapi.py \
-                --query "$query" \
-                --api-key "$api_key" \
-                --output "$output_file" >/dev/null 2>&1
-        fi
-        
-        # Check results
-        if [[ -f "$output_file" ]]; then
-            lines=$(wc -l < "$output_file" | tr -d ' ')
-            lines=$((lines - 1))
-        else
-            lines=0
-        fi
-        
-        if [[ $lines -le 0 ]]; then
-            echo "[$i/$query_count] ✗ $query (0 results)"
-            echo "$query" >> "$FAILED_LOG"
-        else
-            echo "[$i/$query_count] ✓ $query ($lines hotels)"
-        fi
-    ) &
-    
-    ((running_jobs++))
-    
-    # Wait if we've hit max parallel jobs
-    if [[ $running_jobs -ge $PARALLEL_JOBS ]]; then
-        wait -n 2>/dev/null || wait
-        ((running_jobs--))
+    # Run scraper SEQUENTIALLY (more reliable)
+    if [[ "$provider" == "serper" ]]; then
+        python3 sadie_scraper_serper.py \
+            --query "$query" \
+            --api-key "$api_key" \
+            --no-neighborhoods \
+            --output "$output_file" 2>/dev/null
+    else
+        python3 sadie_scraper_serpapi.py \
+            --query "$query" \
+            --api-key "$api_key" \
+            --output "$output_file" 2>/dev/null
     fi
     
-    # Small stagger
+    # Check results
+    if [[ -f "$output_file" ]]; then
+        lines=$(wc -l < "$output_file" | tr -d ' ')
+        lines=$((lines - 1))
+    else
+        lines=0
+    fi
+    
+    if [[ $lines -le 0 ]]; then
+        echo "[$processed_count] ✗ $query (0 results)"
+        echo "$query" >> "$FAILED_LOG"
+    else
+        echo "[$processed_count] ✓ $query ($lines hotels)"
+    fi
+    
+    # Small pause
     sleep 0.2
 done
-
-# Wait for all remaining jobs
-echo ""
-echo "Waiting for remaining jobs to complete..."
-wait
 
 echo ""
 echo "All queries complete!"

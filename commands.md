@@ -45,4 +45,47 @@ python3 sadie_detector.py --input scraper_output/test_hotel.csv --output detecto
 python3 sadie_detector.py --input scraper_output/ocean_city_hotels.csv --output detector_output/ocean_city_leads.csv
 
 python3 sadie_detector.py --input scraper_output/gatlinburg_hotels.csv --output detector_output/gatlinburg_leads.csv
+
+python3 sadie_detector.py --input enricher_output/ocean_city_hotels_enriched.csv --output detector_output/ocean_city_leads.csv --concurrency 10
+
+python3 sadie_detector.py --input scraper_output/sydney_all_unique.csv --output detector_output/sydney_leads.csv --concurrency 10
+
+```
+
+
+
+```bash
+# Merge all Sydney scraper outputs:
+python3 merge_unique.py 'scraper_output/sydney_*/*.csv' scraper_output/sydney_*.csv -o sydney_all_unique.csv
+
+# Merge specific files:
+python3 merge_unique.py file1.csv file2.csv file3.csv -o merged.csv
+
+# Dedupe by hotel name + phone (stricter):
+python3 merge_unique.py *.csv -o merged.csv --key hotel,phone
+
+# Merge the Apify files with your scraper output:
+python3 merge_unique.py \
+    scraper_output/sydney_hotels_apify_1.csv \
+    scraper_output/sydney_hotels_apify_2.csv \
+    scraper_output/sydney_travel.csv \
+    scraper_output/sydney_serper.csv \
+    'scraper_output/sydney_multi_*/*.csv' \
+    -o sydney_all_hotels.csv
+
+```
+
+
+
+Tier 1 (Booking + Known Engine): 358 (13.7%)
+Tier 2 (Booking + Unknown Engine): 752 (28.9%)
+Tier 3 (No Booking): 0 (0.0%)
+
+
+
+```bash
+python3 merge_unique.py \
+    'scraper_output/sydney_multi*/*.csv' \
+    scraper_output/sydney*.csv \
+    -o scraper_output/sydney_all_unique.csv
 ```

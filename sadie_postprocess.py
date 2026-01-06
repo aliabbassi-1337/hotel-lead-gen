@@ -41,12 +41,23 @@ def postprocess(input_file: str):
     original_count = len(rows)
     log(f"  Input rows: {original_count}")
     
-    # Remove dead/broken domains
-    dead_errors = ["ERR_NAME_NOT_RESOLVED", "ERR_HTTP2_PROTOCOL_ERROR"]
-    clean_rows = [r for r in rows if not any(e in (r.get("error") or "") for e in dead_errors)]
-    dead_count = len(rows) - len(clean_rows)
+    # Remove dead/broken domains (domain doesn't exist or connection failed)
+    dead_errors = ["ERR_NAME_NOT_RESOLVED", "ERR_HTTP2_PROTOCOL_ERROR", "ERR_CONNECTION_RESET"]
+    dead_removed = []
+    clean_rows = []
+    for r in rows:
+        error = r.get("error") or ""
+        if any(e in error for e in dead_errors):
+            dead_removed.append((r.get("website", ""), error))
+        else:
+            clean_rows.append(r)
+    dead_count = len(dead_removed)
     if dead_count:
-        log(f"  Removed dead/broken domains: {dead_count}")
+        log(f"  Removed dead domains (site doesn't exist): {dead_count}")
+        for domain, err in dead_removed[:10]:  # Show first 10
+            log(f"    - {domain} ({err[:40]}...)")
+        if dead_count > 10:
+            log(f"    ... and {dead_count - 10} more")
     
     # Check for contact info
     def has_contact(row):
@@ -68,6 +79,8 @@ def postprocess(input_file: str):
         # Big chains
         "hilton.com", "marriott.com", "ihg.com", "hyatt.com", "wyndham.com",
         "choicehotels.com", "bestwestern.com", "radissonhotels.com", "accor.com",
+        # Restaurant reservations (not hotels)
+        "sevenrooms.com", "opentable.com", "resy.com", "nowbookit.com", "dimmi.com.au",
         # Short links / maps
         "goo.gl", "bit.ly", "maps.app",
     ]
@@ -102,12 +115,22 @@ def postprocess(input_file: str):
     if junk_booking_removed:
         log(f"  Removed junk booking (no contact): {junk_booking_removed}")
     
-    # Remove remaining rows with no contact info
+    # Remove rows with non-engine booking_engine values
+    # Note: unknown_booking_api is KEPT - it means we found a booking API, just don't know which one
+    no_engine_values = {"proprietary_or_same_domain", "unknown", "unknown_third_party", "Angular-based", "contact_only"}
+    before_no_engine = len(clean_rows)
+    clean_rows = [r for r in clean_rows if (r.get("booking_engine") or "") not in no_engine_values]
+    no_engine_removed = before_no_engine - len(clean_rows)
+    if no_engine_removed:
+        log(f"  Removed no real engine: {no_engine_removed}")
+    
+    # Remove rows with no contact info AND no booking URL
+    # If we have a booking URL, keep the row even without contact info
     before_contact = len(clean_rows)
-    clean_rows = [r for r in clean_rows if has_contact(r)]
+    clean_rows = [r for r in clean_rows if has_contact(r) or r.get("booking_url", "").strip()]
     no_contact_count = before_contact - len(clean_rows)
     if no_contact_count:
-        log(f"  Removed no contact info: {no_contact_count}")
+        log(f"  Removed no contact AND no booking URL: {no_contact_count}")
     
     # Remove junk domains
     junk_domains = [
@@ -139,9 +162,19 @@ def postprocess(input_file: str):
         return False
     
     before_junk = len(clean_rows)
-    clean_rows = [r for r in clean_rows if not is_junk_domain(r)]
+    junk_removed = []
+    kept_rows = []
+    for r in clean_rows:
+        if is_junk_domain(r):
+            junk_removed.append(r.get("website", ""))
+        else:
+            kept_rows.append(r)
+    clean_rows = kept_rows
     junk_count = before_junk - len(clean_rows)
-    log(f"  Removed junk domains: {junk_count}")
+    if junk_count:
+        log(f"  Removed junk website domains: {junk_count}")
+        for domain in junk_removed:
+            log(f"    - {domain}")
     
     
     # Deduplicate by (name, website)
