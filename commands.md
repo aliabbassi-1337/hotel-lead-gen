@@ -89,3 +89,16 @@ python3 merge_unique.py \
     scraper_output/sydney*.csv \
     -o scraper_output/sydney_all_unique.csv
 ```
+
+
+
+# Generate all country stats manually
+```bash
+python3 sadie_country_stats.py
+
+# Generate stats for a specific country
+python3 sadie_country_stats.py --country usa
+
+# Sync a city (country stats auto-update)
+python3 sadie_onedrive_sync.py --city gatlinburg --input detector_output/gatlinburg_leads_post.csv --scraper scraper_output/gatlinburg_hotels.csv --detector detector_output/gatlinburg_leads.csv
+```

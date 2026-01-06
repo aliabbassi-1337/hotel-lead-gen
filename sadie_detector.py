@@ -477,12 +477,7 @@ class BookingButtonFinder:
             
             for (const el of elements) {
                 const text = (el.innerText || el.textContent || el.value || '').toLowerCase().trim();
-                // Handle SVG elements where href is an object, not a string
-                let rawHref = el.href;
-                if (rawHref && typeof rawHref === 'object' && rawHref.baseVal) {
-                    rawHref = rawHref.baseVal;  // SVGAnimatedString
-                }
-                const href = String(rawHref || el.getAttribute('href') || '').toLowerCase();
+                const href = (el.href || el.getAttribute('href') || '').toLowerCase();
                 const rect = el.getBoundingClientRect();
                 
                 // Skip invisible elements
@@ -554,7 +549,7 @@ class BookingButtonFinder:
                         tag: el.tagName.toLowerCase(),
                         text: text.substring(0, 40),
                         href: href.substring(0, 200),
-                        fullHref: String(rawHref || el.getAttribute('href') || ''),
+                        fullHref: el.href || el.getAttribute('href') || '',
                         classes: (el.className || '').substring(0, 100),
                         id: el.id || '',
                         priority: priority + lengthPenalty,
@@ -1232,7 +1227,7 @@ class HotelProcessor:
     
     async def _analyze_booking_page(self, context, booking_url: str, hotel_domain: str, 
                                      click_method: str, result: HotelResult) -> tuple[str, str, HotelResult]:
-        """Navigate to booking URL, sniff network, detect engine, take screenshot.
+        """Navigate to booking URL, sniff network, detect engine.
         Returns (engine_name, engine_domain, result)."""
         log(f"  Booking URL: {booking_url[:80]}...")
         
@@ -1267,7 +1262,6 @@ class HotelProcessor:
                 engine_name, engine_domain, url_method = EngineDetector.from_url(external_booking_url, hotel_domain)
                 if engine_name and engine_name not in ("proprietary_or_same_domain",):
                     result.detection_method = f"{click_method}+external_booking_url"
-                    result = await self._take_screenshot(page, result)
                     await page.close()
                     return engine_name, engine_domain, result
             
@@ -1305,9 +1299,6 @@ class HotelProcessor:
                 result.booking_url = external_booking_url
             
             result.detection_method = f"{click_method}+{net_method}"
-            
-            # Take screenshot as proof
-            result = await self._take_screenshot(page, result)
             
         except Exception as e:
             log(f"  Booking page error: {e}")
@@ -1506,23 +1497,6 @@ class HotelProcessor:
         
         return ""
     
-    async def _take_screenshot(self, page, result: HotelResult, suffix: str = "") -> HotelResult:
-        """Take screenshot of page."""
-        try:
-            safe_name = re.sub(r'[^\w\-]', '_', result.name)[:50]
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{safe_name}{suffix}_{timestamp}.png"
-            path = os.path.join(self.screenshots_dir, filename)
-            
-            await page.screenshot(path=path, full_page=False)
-            result.screenshot_path = filename
-            log(f"  Screenshot: {filename}")
-        except Exception as e:
-            log(f"  Screenshot failed: {e}")
-        
-        return result
-
-
 # ============================================================================
 # MAIN PIPELINE
 # ============================================================================
@@ -1538,7 +1512,6 @@ class DetectorPipeline:
         log("Sadie Detector - Booking Engine Detection")
         
         # Setup
-        Path(self.config.screenshots_dir).mkdir(parents=True, exist_ok=True)
         
         # Load hotels
         hotels = self._load_hotels(input_csv)
@@ -1558,7 +1531,7 @@ class DetectorPipeline:
             browser = await p.chromium.launch(headless=self.config.headless)
             semaphore = asyncio.Semaphore(self.config.concurrency)
             
-            processor = HotelProcessor(self.config, browser, semaphore, self.config.screenshots_dir)
+            processor = HotelProcessor(self.config, browser, semaphore)
             
             tasks = [
                 processor.process(idx, len(hotels), hotel)
@@ -1727,7 +1700,6 @@ class DetectorPipeline:
         logger.info(f"HIT RATE:             {hit_rate:.1f}%")
         logger.info("=" * 60)
         logger.info(f"Output: {self.config.output_csv}")
-        logger.info(f"Screenshots: {self.config.screenshots_dir}/")
 
 
 # ============================================================================
@@ -1737,7 +1709,6 @@ class DetectorPipeline:
 async def main_async(args):
     config = Config(
         output_csv=args.output,
-        screenshots_dir=args.screenshots_dir,
         concurrency=args.concurrency,
         pause_between_hotels=args.pause,
         headless=not args.headed,
@@ -1751,7 +1722,6 @@ def main():
     parser = argparse.ArgumentParser(description="Sadie Detector - Booking Engine Detection")
     parser.add_argument("--input", required=True, help="Input CSV with hotels")
     parser.add_argument("--output", default="sadie_leads.csv", help="Output CSV file")
-    parser.add_argument("--screenshots-dir", default="screenshots")
     parser.add_argument("--concurrency", type=int, default=5)
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--pause", type=float, default=0.5)

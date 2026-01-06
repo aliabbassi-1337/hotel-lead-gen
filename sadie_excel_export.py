@@ -175,6 +175,13 @@ def create_excel_export(input_file: str, city: str, scraper_file: str = None,
         print(f"Error: No data in {input_file}")
         return
     
+    # Filter out debug columns - these are NOT for sales people
+    debug_columns = [
+        "error", "detection_method", "screenshot_path", 
+        "booking_engine_domain", "latitude", "longitude"
+    ]
+    headers = [h for h in headers if h not in debug_columns]
+    
     # Create workbook
     wb = Workbook()
     

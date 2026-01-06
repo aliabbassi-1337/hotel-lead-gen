@@ -155,6 +155,13 @@ def sync_city_data(city: str, input_file: str, country: str = None,
     city_path = get_city_path(city, country, region, state)
     city_path.mkdir(parents=True, exist_ok=True)
     
+    # Determine actual country (for stats regeneration)
+    city_key = city.lower().replace(" ", "_").replace("-", "_")
+    if city_key in CITY_MAPPINGS and not country:
+        actual_country = CITY_MAPPINGS[city_key][0]
+    else:
+        actual_country = country
+    
     # Generate timestamp for versioning
     timestamp = datetime.now().strftime("%Y%m%d")
     base_name = os.path.splitext(os.path.basename(input_file))[0]
@@ -173,6 +180,16 @@ def sync_city_data(city: str, input_file: str, country: str = None,
         print(f"\n✅ Synced to: {city_path}")
         print(f"   📊 {excel_dest.name}")
         print(f"   (OneDrive will auto-sync)")
+        
+        # Regenerate country stats
+        if actual_country:
+            print(f"\n📊 Updating {actual_country.upper()} country stats...")
+            try:
+                from sadie_country_stats import process_country
+                process_country(actual_country)
+            except Exception as e:
+                print(f"   Warning: Could not update country stats: {e}")
+        
     except ImportError:
         print("❌ Could not create Excel file (openpyxl not available)")
         print("   Install with: pip3 install openpyxl")
