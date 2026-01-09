@@ -1,13 +1,33 @@
-yeet.md
-.env
-screenshots/
-sadie_leads.csv
-florida_miami_hotels_1.csv
-prompt.md
-test_hotel.csv
-sadie_scraper.log
-sadie_detector.log
+# Data directories
+scraper_output/
+detector_output/
+onedrive_output/
+enricher_output/
+data/
 
-detector_output
-scraper_output
-enricher_output
+# Environment
+.env
+.env.*
+venv/
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Old/archived code
+old/
+
+# Temp files
+*.csv
+!requirements.txt
+screenshots/
+yeet.md
