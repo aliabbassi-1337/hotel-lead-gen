@@ -35,6 +35,7 @@ SKIP_CUSTOMER=false
 SKIP_EXPORT=false
 CONCURRENCY=10
 COUNTRY="USA"
+OUTPUT_STATE=""
 INPUT_PATHS=()
 
 while [[ $# -gt 0 ]]; do
@@ -45,10 +46,12 @@ while [[ $# -gt 0 ]]; do
         --skip-export) SKIP_EXPORT=true; shift ;;
         --concurrency) CONCURRENCY="$2"; shift 2 ;;
         --country) COUNTRY="$2"; shift 2 ;;
+        --state) OUTPUT_STATE="$2"; shift 2 ;;
         --help|-h)
             echo "Usage: ./run_pipeline.sh <files_or_folders...> [options]"
             echo ""
             echo "Options:"
+            echo "  --state <name>       Output state folder name (e.g. 'florida')"
             echo "  --skip-detect        Skip detection (use existing detector output)"
             echo "  --skip-room-count    Skip room count enrichment"
             echo "  --skip-customer      Skip customer enrichment"
@@ -113,16 +116,16 @@ for SCRAPER_FILE in "${FILES[@]}"; do
     # Get folder name from file's parent directory
     FOLDER_NAME=$(basename "$(dirname "$SCRAPER_FILE")")
 
-    # Output paths - try to extract state from folder or filename
-    if [ "$FOLDER_NAME" = "scraper_output" ]; then
+    # Output paths - use --state flag or extract from folder/filename
+    if [ -n "$OUTPUT_STATE" ]; then
+        STATE_SLUG="$OUTPUT_STATE"
+    elif [ "$FOLDER_NAME" = "scraper_output" ]; then
         # File is directly in scraper_output/, try to extract state from filename
-        # e.g., florida_grid_leads.csv -> florida, miami_hotels.csv -> miami
         STATE_SLUG=$(echo "$CITY_SLUG" | cut -d'_' -f1)
-        DETECTOR_DIR="detector_output/${STATE_SLUG}"
     else
         STATE_SLUG="$FOLDER_NAME"
-        DETECTOR_DIR="detector_output/${FOLDER_NAME}"
     fi
+    DETECTOR_DIR="detector_output/${STATE_SLUG}"
     
     # State name from slug (florida -> Florida) - macOS compatible
     STATE_NAME=$(echo "$STATE_SLUG" | sed 's/_/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
@@ -138,6 +141,15 @@ for SCRAPER_FILE in "${FILES[@]}"; do
     log "Scraper:  $SCRAPER_FILE"
     log "Leads:    $LEADS_FILE"
     log "OneDrive: $EXCEL_FILE"
+
+    # Skip if output already exists
+    if [ -f "$LEADS_FILE" ] && [ "$SKIP_DETECT" = false ]; then
+        EXISTING_LINES=$(($(wc -l < "$LEADS_FILE") - 1))
+        if [ "$EXISTING_LINES" -gt 0 ]; then
+            warn "Skipping $CITY_SLUG - already has $EXISTING_LINES leads. Use --skip-detect to re-process."
+            continue
+        fi
+    fi
 
     # Step 1: Detect
     if [ "$SKIP_DETECT" = false ]; then
