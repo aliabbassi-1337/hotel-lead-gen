@@ -913,12 +913,13 @@ class BookingButtonFinder:
 
 class HotelProcessor:
     """Processes a single hotel: visits site, detects engine, extracts contacts."""
-    
-    def __init__(self, config: Config, browser, semaphore):
+
+    def __init__(self, config: Config, browser, semaphore, context_queue: asyncio.Queue = None):
         self.config = config
         self.browser = browser
         self.semaphore = semaphore
         self.button_finder = BookingButtonFinder(config)
+        self.context_queue = context_queue  # Async queue of reusable browser contexts
     
     async def process(self, idx: int, total: int, hotel: dict) -> HotelResult:
         """Process a single hotel and return results."""
@@ -954,10 +955,16 @@ class HotelProcessor:
     
     async def _process_website(self, result: HotelResult) -> HotelResult:
         """Visit website and extract all data."""
-        context = await self.browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-            ignore_https_errors=True,  # Some hotel sites have bad SSL certs
-        )
+        # Reuse context from queue if available, otherwise create new one
+        if self.context_queue:
+            context = await self.context_queue.get()
+            reuse_context = True
+        else:
+            context = await self.browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                ignore_https_errors=True,
+            )
+            reuse_context = False
         page = await context.new_page()
         
         # Capture homepage network requests (for fallback detection)
@@ -989,7 +996,7 @@ class HotelProcessor:
             log(f"  [TIME] goto: {time.time()-t0:.1f}s")
             
             # Wait for iframes and JS to render before scanning HTML
-            await asyncio.sleep(3.0)  # Increased from 1.5s for slow JS widgets
+            await asyncio.sleep(1.5)  # Reduced from 3.0s - most JS loads faster
             
             hotel_domain = extract_domain(page.url)
             log(f"  Loaded: {hotel_domain}")
@@ -1235,11 +1242,16 @@ class HotelProcessor:
             result.error = f"exception: {error_msg}"
             log(f"  ERROR: {e}")
         
-        await context.close()
-        
+        # Return context to queue or close it
+        if reuse_context and self.context_queue is not None:
+            await page.close()  # Close the page, keep context
+            await self.context_queue.put(context)
+        else:
+            await context.close()
+
         if self.config.pause_between_hotels > 0:
             await asyncio.sleep(self.config.pause_between_hotels)
-        
+
         return result
     
     def _needs_fallback(self, engine_name: str) -> bool:
@@ -1884,17 +1896,32 @@ class DetectorPipeline:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=self.config.headless)
             semaphore = asyncio.Semaphore(self.config.concurrency)
-            
-            processor = HotelProcessor(self.config, browser, semaphore)
-            
+
+            # Create reusable context queue (one per concurrent worker)
+            log(f"Creating {self.config.concurrency} reusable browser contexts...")
+            context_queue = asyncio.Queue()
+            contexts = []
+            for _ in range(self.config.concurrency):
+                ctx = await browser.new_context(
+                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                    ignore_https_errors=True,
+                )
+                contexts.append(ctx)
+                await context_queue.put(ctx)
+
+            processor = HotelProcessor(self.config, browser, semaphore, context_queue)
+
             tasks = [
                 processor.process(idx, len(hotels), hotel)
                 for idx, hotel in enumerate(hotels, 1)
             ]
-            
+
             # Write results (merging with existing successful results)
             await self._write_results(tasks, existing_results)
-            
+
+            # Clean up contexts
+            for ctx in contexts:
+                await ctx.close()
             await browser.close()
     
     def _load_hotels(self, input_csv: str) -> list[dict]:
