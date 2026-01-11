@@ -47,14 +47,16 @@ for city in "\${CITIES[@]}"; do
     aws s3 cp s3://${S3_BUCKET}/scraper_output/florida/\${city}.csv scraper_output/florida/
 done
 
-# Detect each city
+# Detect all cities in parallel
+echo "[\$(date +%H:%M:%S)] Starting detection on all 25 cities in parallel..."
 for city in "\${CITIES[@]}"; do
-    echo "[\$(date +%H:%M:%S)] Detecting: \${city}"
     python3 scripts/pipeline/detect.py \
         --input scraper_output/florida/\${city}.csv \
         --output detector_output/florida/\${city}_leads.csv \
-        --concurrency ${CONCURRENCY}
+        --concurrency 10 &
 done
+wait
+echo "[\$(date +%H:%M:%S)] All cities complete!"
 
 # Push results to S3
 aws s3 sync detector_output/florida/ s3://${S3_BUCKET}/detector_output/florida/
