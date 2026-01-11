@@ -4,17 +4,17 @@
 
 ```mermaid
 flowchart TB
-    subgraph LOCAL["🖥️ LOCAL MAC"]
+    subgraph LOCAL["LOCAL MAC"]
         direction TB
 
         subgraph SCRAPING["Phase 1: Scraping"]
             direction LR
-            OSM[("OSM API<br/>Overpass")]
-            SERPER[("Serper API<br/>Google Maps")]
+            OSM[("OSM API")]
+            SERPER[("Serper API")]
 
-            OSM_SCRIPT["sadie_scraper_osm.py"]
-            SERPER_SCRIPT["sadie_scraper_serper.py"]
-            ZIP_SCRIPT["sadie_scraper_zipcode.py"]
+            OSM_SCRIPT["osm.py"]
+            SERPER_SCRIPT["serper.py"]
+            ZIP_SCRIPT["zipcode.py"]
 
             OSM --> OSM_SCRIPT
             SERPER --> SERPER_SCRIPT
@@ -25,7 +25,6 @@ flowchart TB
             direction LR
             MIAMI_CSV["miami.csv"]
             TAMPA_CSV["tampa.csv"]
-            ORLANDO_CSV["orlando.csv"]
             OTHER_CSV["...22 cities"]
         end
 
@@ -33,187 +32,151 @@ flowchart TB
         SERPER_SCRIPT --> SCRAPER_OUTPUT
         ZIP_SCRIPT --> SCRAPER_OUTPUT
 
-        SYNC_UP["sync_to_s3.sh<br/>📤 Upload"]
+        SYNC_UP["sync_to_s3.sh"]
     end
 
     SCRAPER_OUTPUT --> SYNC_UP
 
-    subgraph S3["☁️ AWS S3 - sadie-pipeline"]
+    subgraph S3["AWS S3"]
         direction TB
-        S3_INPUT["📁 input/florida/<br/>├── miami.csv<br/>├── tampa.csv<br/>└── ..."]
-        S3_OUTPUT["📁 output/florida/<br/>├── miami_leads.csv<br/>├── tampa_leads.csv<br/>└── ..."]
+        S3_INPUT["input/florida/<br>├ miami.csv<br>├ tampa.csv<br>└ orlando.csv"]
+        S3_OUTPUT["output/florida/<br>├ miami_leads.csv<br>├ tampa_leads.csv<br>└ orlando_leads.csv"]
     end
 
-    SYNC_UP -->|"aws s3 sync"| S3_INPUT
+    SYNC_UP -->|aws s3 sync| S3_INPUT
 
-    subgraph EC2["⚡ AWS EC2 - c6i.2xlarge"]
+    subgraph EC2["AWS EC2"]
         direction TB
 
-        subgraph DOWNLOAD["Step 1: Download"]
-            EC2_DOWNLOAD["Download from S3<br/>→ /tmp/input/"]
+        EC2_DOWNLOAD["Download from S3<br>boto3.download_file"]
+
+        subgraph DETECTOR["Detector - Parallel Workers"]
+            direction LR
+            W1["Worker 1"]
+            W2["Worker 2"]
+            W3["Worker 3"]
+            WN["Worker N"]
         end
 
-        subgraph DETECTOR["Step 2: Detection (Parallel)"]
-            direction TB
-
-            subgraph WORKER_POOL["Worker Pool (--concurrency 20)"]
-                W1["Worker 1"]
-                W2["Worker 2"]
-                W3["Worker 3"]
-                WN["Worker N..."]
-            end
-
-            subgraph PER_HOTEL["Per Hotel Processing"]
-                direction TB
-                LOAD["1. Load Homepage<br/>playwright goto()"]
-                CONTACTS["2. Extract Contacts<br/>phone, email, rooms"]
-                HTML_SCAN["3. Scan HTML<br/>for engine patterns"]
-                BUTTON["4. Find Book Button<br/>JS evaluate"]
-                CLICK["5. Click & Navigate<br/>capture network"]
-                ANALYZE["6. Analyze Booking Page<br/>detect engine"]
-                FALLBACK["7. Fallbacks<br/>iframe, network, HTML"]
-            end
-
-            LOAD --> CONTACTS --> HTML_SCAN --> BUTTON --> CLICK --> ANALYZE --> FALLBACK
-        end
-
-        subgraph LOCAL_SAVE["Step 3: Local Checkpoint"]
-            EC2_LOCAL["💾 /tmp/output/<br/>Incremental saves<br/>every 5 hotels"]
-        end
-
-        subgraph UPLOAD["Step 4: Upload"]
-            EC2_UPLOAD["Upload to S3<br/>final results"]
-        end
+        EC2_LOCAL["/tmp/output/<br>├ checkpoint every 5 hotels<br>└ incremental CSV saves"]
+        EC2_UPLOAD["Upload to S3<br>boto3.upload_file"]
 
         EC2_DOWNLOAD --> DETECTOR
-        DETECTOR --> LOCAL_SAVE
-        LOCAL_SAVE --> EC2_UPLOAD
+        DETECTOR --> EC2_LOCAL
+        EC2_LOCAL --> EC2_UPLOAD
     end
 
-    S3_INPUT -->|"boto3 download"| EC2_DOWNLOAD
-    EC2_UPLOAD -->|"boto3 upload"| S3_OUTPUT
+    S3_INPUT --> EC2_DOWNLOAD
+    EC2_UPLOAD --> S3_OUTPUT
 
-    subgraph LOCAL_POST["🖥️ LOCAL MAC - Post-processing"]
+    subgraph LOCAL_POST["LOCAL MAC - Post-process"]
         direction TB
 
-        SYNC_DOWN["sync_from_s3.sh<br/>📥 Download"]
+        SYNC_DOWN["sync_from_s3.sh"]
+        DEDUPE["dedupe.py"]
+        SPLIT["split_by_city.py"]
+        EXCEL["export_excel.py"]
+        FINAL["detector_output/<br>├ florida_leads.csv<br>├ florida_leads.xlsx<br>└ city/*.csv"]
+        ONEDRIVE["OneDrive"]
 
-        subgraph POSTPROCESS["Phase 3: Post-processing"]
-            direction TB
-            DEDUPE["sadie_dedupe.py<br/>Remove duplicates"]
-            SPLIT["sadie_split_by_city.py<br/>Split by coordinates"]
-            ENRICH["sadie_room_enricher_llm.py<br/>Enrich room counts"]
-            EXCEL["sadie_excel_export.py<br/>Generate Excel"]
-        end
-
-        subgraph FINAL_OUTPUT["detector_output/florida/"]
-            LEADS_CSV["florida_leads.csv"]
-            CITY_CSVS["city/*.csv"]
-            EXCEL_FILE["florida_leads.xlsx"]
-        end
-
-        ONEDRIVE["☁️ OneDrive<br/>sync_to_onedrive.sh"]
+        SYNC_DOWN --> DEDUPE --> SPLIT --> EXCEL --> FINAL --> ONEDRIVE
     end
 
-    S3_OUTPUT -->|"aws s3 sync"| SYNC_DOWN
-    SYNC_DOWN --> DEDUPE
-    DEDUPE --> SPLIT --> ENRICH --> EXCEL
-    EXCEL --> FINAL_OUTPUT
-    FINAL_OUTPUT --> ONEDRIVE
+    S3_OUTPUT --> SYNC_DOWN
 ```
 
-## Detailed Detection Flow (Per Hotel)
+## Per-Hotel Detection Flow
 
 ```mermaid
 flowchart TB
-    START([Hotel Input<br/>name, website, phone])
+    START([Hotel Input<br>├ name<br>├ website<br>└ phone])
 
-    START --> NORMALIZE["Normalize URL<br/>add https://"]
+    START --> NORMALIZE["Normalize URL<br>add https://"]
 
-    NORMALIZE --> SKIP_CHECK{"Skip?<br/>Chain/Junk?"}
-    SKIP_CHECK -->|"marriott.com<br/>facebook.com"| SKIP_END([Skip - No Output])
-
-    SKIP_CHECK -->|Valid| GOTO["playwright.goto()<br/>timeout: 30s<br/>wait: domcontentloaded"]
+    NORMALIZE --> SKIP_CHECK{"Skip Check<br>├ Chain? marriott, hilton<br>└ Junk? facebook, .gov"}
+    SKIP_CHECK -->|Yes| SKIP_END([Skip - No Output])
+    SKIP_CHECK -->|Valid| GOTO["playwright.goto<br>├ timeout: 30s<br>└ wait: domcontentloaded"]
 
     GOTO --> GOTO_FAIL{Timeout?}
-    GOTO_FAIL -->|Yes| FALLBACK_GOTO["Retry with<br/>wait: commit"]
+    GOTO_FAIL -->|Yes| FALLBACK_GOTO["Retry<br>wait: commit"]
     FALLBACK_GOTO --> EXTRACT
     GOTO_FAIL -->|No| EXTRACT
 
-    EXTRACT["Extract Contacts<br/>• Phone (regex)<br/>• Email (regex)<br/>• Room count"]
+    EXTRACT["Extract Contacts<br>├ Phone regex<br>├ Email regex<br>└ Room count"]
 
-    EXTRACT --> STAGE0["STAGE 0: HTML Scan<br/>Search for engine<br/>patterns in HTML"]
+    EXTRACT --> STAGE0["STAGE 0: HTML Scan<br>├ Search ENGINE_PATTERNS<br>├ Check iframes<br>└ Check hrefs"]
 
-    STAGE0 --> STAGE0_FOUND{Engine<br/>Found?}
-    STAGE0_FOUND -->|Yes| GET_BOOKING_URL["Get booking URL<br/>from href/iframe"]
+    STAGE0 --> STAGE0_FOUND{Engine Found?}
+    STAGE0_FOUND -->|Yes| GET_BOOKING_URL["Get booking URL<br>├ From href<br>└ From iframe src"]
+    GET_BOOKING_URL --> DONE
     STAGE0_FOUND -->|No| STAGE1
 
-    GET_BOOKING_URL --> DONE
+    STAGE1["STAGE 1: Button Click<br>Find Book Now button"]
 
-    STAGE1["STAGE 1: Button Click<br/>Find 'Book Now' button"]
+    STAGE1 --> FIND_BUTTON["JS Evaluate Priority<br>├ P0: Known engine hrefs<br>├ P1: External domains<br>├ P2: Book Now text<br>└ P3: Reserve text"]
 
-    STAGE1 --> FIND_BUTTON["JS Evaluate:<br/>• Known engine hrefs (P0)<br/>• External domains (P1)<br/>• 'Book Now' text (P2-4)"]
-
-    FIND_BUTTON --> BUTTON_FOUND{Button<br/>Found?}
+    FIND_BUTTON --> BUTTON_FOUND{Button Found?}
     BUTTON_FOUND -->|No| NETWORK_FALLBACK
 
-    BUTTON_FOUND -->|Yes| HAS_HREF{Has href?}
-    HAS_HREF -->|Yes| USE_HREF["Use href directly<br/>as booking URL"]
-    HAS_HREF -->|No| CLICK_BUTTON["Click button<br/>capture network"]
+    BUTTON_FOUND -->|Yes| HAS_HREF{Has href attr?}
+    HAS_HREF -->|Yes| USE_HREF["Use href directly<br>as booking URL"]
+    HAS_HREF -->|No| CLICK_BUTTON["Click button<br>├ Capture network<br>└ Wait for response"]
 
-    CLICK_BUTTON --> POPUP{Popup<br/>opened?}
+    CLICK_BUTTON --> POPUP{Popup opened?}
     POPUP -->|Yes| POPUP_URL["Get popup URL"]
-    POPUP -->|No| NAV_CHECK{Page<br/>navigated?}
-    NAV_CHECK -->|Yes| NAV_URL["Get new URL"]
-    NAV_CHECK -->|No| WIDGET["Widget mode<br/>check network requests"]
+    POPUP -->|No| NAV_CHECK{Page navigated?}
+    NAV_CHECK -->|Yes| NAV_URL["Get new page URL"]
+    NAV_CHECK -->|No| WIDGET["Widget mode<br>├ Check network requests<br>└ Look for API calls"]
 
     USE_HREF --> ANALYZE_URL
     POPUP_URL --> ANALYZE_URL
     NAV_URL --> ANALYZE_URL
     WIDGET --> ANALYZE_URL
 
-    ANALYZE_URL["Analyze Booking URL<br/>• Match ENGINE_PATTERNS<br/>• Check domain<br/>• Network sniff"]
+    ANALYZE_URL["Analyze Booking URL<br>├ Match ENGINE_PATTERNS<br>├ Check domain<br>└ Network sniff"]
 
-    ANALYZE_URL --> ENGINE_FOUND{Engine<br/>Detected?}
+    ANALYZE_URL --> ENGINE_FOUND{Engine Detected?}
     ENGINE_FOUND -->|Yes| DONE
     ENGINE_FOUND -->|No| NETWORK_FALLBACK
 
-    NETWORK_FALLBACK["FALLBACK: Network<br/>Check homepage requests<br/>for engine domains"]
+    NETWORK_FALLBACK["FALLBACK: Network<br>├ Check homepage requests<br>└ Match engine domains"]
 
     NETWORK_FALLBACK --> NET_FOUND{Found?}
     NET_FOUND -->|Yes| DONE
     NET_FOUND -->|No| IFRAME_FALLBACK
 
-    IFRAME_FALLBACK["FALLBACK: Iframes<br/>Scan iframe src URLs"]
+    IFRAME_FALLBACK["FALLBACK: Iframes<br>├ Scan iframe src URLs<br>└ Match ENGINE_PATTERNS"]
 
     IFRAME_FALLBACK --> IFRAME_FOUND{Found?}
     IFRAME_FOUND -->|Yes| DONE
     IFRAME_FOUND -->|No| HTML_FALLBACK
 
-    HTML_FALLBACK["FALLBACK: HTML Keywords<br/>cloudbeds, mews, synxis..."]
+    HTML_FALLBACK["FALLBACK: HTML Keywords<br>├ cloudbeds, mews<br>├ synxis, siteminder<br>└ 180+ patterns"]
 
     HTML_FALLBACK --> DONE
 
-    DONE([Output Result<br/>• booking_url<br/>• booking_engine<br/>• detection_method<br/>• contacts])
+    DONE([Output Result<br>├ booking_url<br>├ booking_engine<br>├ detection_method<br>├ phone, email<br>└ room_count])
 ```
 
 ## Engine Detection Patterns
 
 ```mermaid
 flowchart LR
-    subgraph INPUT["Input URL/HTML"]
-        URL["booking URL"]
-        HTML["page HTML"]
-        NET["network requests"]
+    subgraph INPUT["Input Sources"]
+        URL["Booking URL"]
+        HTML["Page HTML"]
+        NET["Network requests"]
+        IFRAME["Iframe src"]
     end
 
-    subgraph PATTERNS["ENGINE_PATTERNS (188 engines)"]
+    subgraph PATTERNS["ENGINE_PATTERNS - 188 engines"]
         direction TB
-        P1["Cloudbeds: cloudbeds.com"]
-        P2["Mews: mews.com, mews.li"]
-        P3["SynXis: synxis.com, travelclick.com"]
-        P4["Little Hotelier: littlehotelier.com"]
-        P5["...180+ more"]
+        P1["Cloudbeds<br>├ cloudbeds.com"]
+        P2["Mews<br>├ mews.com<br>└ mews.li"]
+        P3["SynXis<br>├ synxis.com<br>└ travelclick.com"]
+        P4["Little Hotelier<br>├ littlehotelier.com"]
+        P5["SiteMinder<br>├ thebookingbutton.com<br>└ siteminder.com"]
+        P6["...180+ more"]
     end
 
     subgraph METHODS["Detection Methods"]
@@ -228,10 +191,11 @@ flowchart LR
     URL --> PATTERNS
     HTML --> PATTERNS
     NET --> PATTERNS
+    IFRAME --> PATTERNS
 
     PATTERNS --> METHODS
 
-    METHODS --> OUTPUT["booking_engine:<br/>Cloudbeds, Mews, etc."]
+    METHODS --> OUTPUT["Output<br>├ booking_engine<br>├ booking_engine_domain<br>└ detection_method"]
 ```
 
 ## Parallel Scaling on EC2
@@ -239,26 +203,28 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph S3_IN["S3 Input"]
-        INPUT["florida_hotels.csv<br/>10,000 hotels"]
+        INPUT["florida_hotels.csv<br>├ 10,000 hotels<br>└ ~2,275 from zipcode scrape"]
     end
 
     subgraph EC2_CLUSTER["EC2 Scaling Options"]
         direction TB
 
         subgraph OPT1["Option 1: Single Large Instance"]
-            SINGLE["c6i.4xlarge<br/>16 vCPU, 32GB<br/>--concurrency 40"]
-            SINGLE_RATE["~4,000 hotels/hr"]
+            SINGLE["c6i.4xlarge<br>├ 16 vCPU, 32GB<br>├ --concurrency 40<br>└ ~$0.20/hr spot"]
+            SINGLE_RATE["Throughput: ~4,000 hotels/hr"]
+            SINGLE --> SINGLE_RATE
         end
 
         subgraph OPT2["Option 2: Multiple Instances"]
             direction LR
-            I1["Instance 1<br/>--chunk 1/5"]
-            I2["Instance 2<br/>--chunk 2/5"]
-            I3["Instance 3<br/>--chunk 3/5"]
-            I4["Instance 4<br/>--chunk 4/5"]
-            I5["Instance 5<br/>--chunk 5/5"]
-            MULTI_RATE["~10,000 hotels/hr"]
+            I1["Instance 1<br>--chunk 1/5"]
+            I2["Instance 2<br>--chunk 2/5"]
+            I3["Instance 3<br>--chunk 3/5"]
+            I4["Instance 4<br>--chunk 4/5"]
+            I5["Instance 5<br>--chunk 5/5"]
         end
+        MULTI_RATE["Throughput: ~10,000 hotels/hr"]
+        OPT2 --> MULTI_RATE
     end
 
     INPUT --> OPT1
@@ -268,47 +234,72 @@ flowchart TB
         OUT1["chunk_1_leads.csv"]
         OUT2["chunk_2_leads.csv"]
         OUT3["chunk_3_leads.csv"]
-        MERGED["florida_leads.csv<br/>(merged)"]
+        OUT4["chunk_4_leads.csv"]
+        OUT5["chunk_5_leads.csv"]
+        MERGED["florida_leads.csv<br>├ All results merged<br>└ Deduped"]
     end
 
-    OPT1 --> MERGED
-    I1 --> OUT1
-    I2 --> OUT2
-    I3 --> OUT3
-    OUT1 --> MERGED
-    OUT2 --> MERGED
-    OUT3 --> MERGED
+    SINGLE_RATE --> MERGED
+    I1 --> OUT1 --> MERGED
+    I2 --> OUT2 --> MERGED
+    I3 --> OUT3 --> MERGED
+    I4 --> OUT4 --> MERGED
+    I5 --> OUT5 --> MERGED
+```
+
+## Cost Estimate
+
+```mermaid
+flowchart LR
+    subgraph COST["EC2 Spot Pricing"]
+        C1["c6i.2xlarge<br>├ 8 vCPU, 16GB<br>└ $0.10/hr spot"]
+        C2["c6i.4xlarge<br>├ 16 vCPU, 32GB<br>└ $0.20/hr spot"]
+    end
+
+    subgraph THROUGHPUT["Throughput"]
+        T1["2xlarge<br>├ concurrency=20<br>└ ~2,500 hotels/hr"]
+        T2["4xlarge<br>├ concurrency=40<br>└ ~5,000 hotels/hr"]
+    end
+
+    subgraph TOTAL["10K Hotels Total Cost"]
+        TOT1["Single 2xlarge<br>├ 4 hours<br>└ $0.40 total"]
+        TOT2["Single 4xlarge<br>├ 2 hours<br>└ $0.40 total"]
+        TOT3["5x 2xlarge parallel<br>├ 1 hour<br>└ $0.50 total"]
+    end
+
+    C1 --> T1 --> TOT1
+    C2 --> T2 --> TOT2
+    C1 --> TOT3
 ```
 
 ## File Structure
 
-```
-sadie_gtm/
-├── scripts/
-│   ├── scrapers/
-│   │   ├── osm.py              # OpenStreetMap scraper
-│   │   ├── serper.py           # Google Maps via Serper
-│   │   └── zipcode.py          # Zipcode-based scraper
-│   ├── pipeline/
-│   │   ├── detect.py           # Main detector (this doc)
-│   │   ├── postprocess.py      # Dedupe, clean
-│   │   └── export_excel.py     # Excel export
-│   └── utils/
-│       ├── dedupe.py
-│       ├── split_by_city.py
-│       └── room_enricher_llm.py
-├── scraper_output/
-│   └── florida/
-│       ├── miami.csv
-│       ├── tampa.csv
-│       └── ...
-├── detector_output/
-│   └── florida/
-│       ├── florida_leads.csv
-│       └── city/
-│           ├── miami.csv
-│           └── ...
-├── sync_to_s3.sh               # Upload to S3
-├── sync_from_s3.sh             # Download from S3
-└── run_pipeline.sh             # Full local pipeline
+```mermaid
+flowchart TB
+    subgraph PROJECT["sadie_gtm/"]
+        direction TB
+
+        subgraph SCRIPTS["scripts/"]
+            direction TB
+            SCRAPERS["scrapers/<br>├ osm.py<br>├ serper.py<br>└ zipcode.py"]
+            PIPELINE["pipeline/<br>├ detect.py<br>├ postprocess.py<br>└ export_excel.py"]
+            UTILS["utils/<br>├ dedupe.py<br>├ split_by_city.py<br>└ room_enricher_llm.py"]
+        end
+
+        subgraph DATA["data/"]
+            ZIPCODES["florida_zipcodes.txt<br>├ 1,000+ real zipcodes<br>└ Used by zipcode.py"]
+        end
+
+        subgraph SCRAPER_OUT["scraper_output/florida/"]
+            S_FILES["├ miami.csv<br>├ tampa.csv<br>├ orlando.csv<br>└ ...22 cities"]
+        end
+
+        subgraph DETECTOR_OUT["detector_output/florida/"]
+            D_FILES["├ florida_leads.csv<br>├ florida_leads.xlsx<br>└ city/*.csv"]
+        end
+
+        subgraph SHELL["Shell Scripts"]
+            SH_FILES["├ sync_to_s3.sh<br>├ sync_from_s3.sh<br>├ sync_to_onedrive.sh<br>└ run_pipeline.sh"]
+        end
+    end
 ```

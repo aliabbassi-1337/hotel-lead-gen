@@ -423,6 +423,8 @@ def parse_serper_place(place: dict) -> dict:
         "phone": place.get("phoneNumber", ""),
         "lat": lat,
         "long": lng,
+        "address": place.get("address", ""),
+        "rating": place.get("rating", ""),
     }
 
 
@@ -477,7 +479,7 @@ def run_scraper(
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
-    fieldnames = ["hotel", "website", "phone", "lat", "long"]
+    fieldnames = ["hotel", "website", "phone", "lat", "long", "address", "rating"]
 
     # Check for existing file and load existing hotel names
     existing_names = set()
@@ -551,9 +553,6 @@ def main():
     
     location = args.query or args.city
 
-    # Timestamp for unique filenames
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-
     # Generate default output path from location
     if args.output:
         output_csv = args.output
@@ -565,7 +564,7 @@ def main():
             state_slug = parts[1].strip().lower().replace(" ", "_")
         else:
             state_slug = "unknown"
-        output_csv = f"scraper_output/{state_slug}/{city_slug}_serper_{timestamp}.csv"
+        output_csv = f"scraper_output/{state_slug}/{city_slug}.csv"
     
     # Handle neighborhoods
     if args.no_neighborhoods:

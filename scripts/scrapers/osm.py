@@ -341,19 +341,43 @@ def run_osm_scraper(
     log(f"  With phone:   {with_phone} ({100*with_phone/len(hotels):.1f}%)")
     log(f"  With address: {with_address} ({100*with_address/len(hotels):.1f}%)")
     
-    # Save results
+    # Save results (append to existing, skip duplicates)
     if hotels:
         output_dir = os.path.dirname(output_csv)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
-        
-        fieldnames = ["hotel", "website", "phone", "lat", "long", "address", "rating", "osm_id", "tourism_type"]
-        with open(output_csv, "w", newline="", encoding="utf-8") as f:
+
+        fieldnames = ["hotel", "website", "phone", "lat", "long", "address", "rating"]
+
+        # Load existing hotel names to skip duplicates
+        existing_names = set()
+        file_exists = os.path.exists(output_csv)
+        if file_exists:
+            with open(output_csv, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    name = (row.get("hotel") or "").lower().strip()
+                    if name:
+                        existing_names.add(name)
+
+        # Filter out duplicates and strip source-specific fields
+        new_hotels = []
+        for h in hotels:
+            name = (h.get("hotel") or "").lower().strip()
+            if name and name not in existing_names:
+                # Only keep universal fields
+                new_hotels.append({k: h.get(k, "") for k in fieldnames})
+                existing_names.add(name)
+
+        # Append or create
+        mode = "a" if file_exists else "w"
+        with open(output_csv, mode, newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(hotels)
-        
-        log(f"\n✅ Saved {len(hotels)} hotels to: {output_csv}")
+            if not file_exists:
+                writer.writeheader()
+            writer.writerows(new_hotels)
+
+        log(f"\n✅ Added {len(new_hotels)} new hotels to: {output_csv} (skipped {len(hotels) - len(new_hotels)} dupes)")
 
 
 def main():
@@ -374,12 +398,9 @@ def main():
     args = parser.parse_args()
     
     # Determine bounds
-    # Timestamp for unique filenames
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-
     if args.state:
         min_lat, max_lat, min_lng, max_lng = STATE_BOUNDS[args.state]
-        output = args.output or f"scraper_output/{args.state}/{args.state}_osm_{timestamp}.csv"
+        output = args.output or f"scraper_output/{args.state}/{args.state}.csv"
     elif args.city:
         bounds = geocode_city(args.city)
         if not bounds:
@@ -390,14 +411,14 @@ def main():
         parts = args.city.split(",")
         city_name = parts[0].strip().lower().replace(" ", "_")
         state_name = parts[1].strip().lower().replace(" ", "_") if len(parts) > 1 else "unknown"
-        output = args.output or f"scraper_output/{state_name}/{city_name}_osm_{timestamp}.csv"
+        output = args.output or f"scraper_output/{state_name}/{city_name}.csv"
     elif args.bbox:
         min_lat, max_lat, min_lng, max_lng = args.bbox
-        output = args.output or f"scraper_output/custom/custom_osm_{timestamp}.csv"
+        output = args.output or f"scraper_output/custom/custom.csv"
     else:
         log("ERROR: Provide --state, --city, or --bbox")
         sys.exit(1)
-    
+
     run_osm_scraper(min_lat, max_lat, min_lng, max_lng, output)
 
 

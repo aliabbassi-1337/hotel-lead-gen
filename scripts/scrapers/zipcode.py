@@ -220,7 +220,6 @@ def search_zipcode(zipcode: str, api_key: str) -> list:
                 "long": place.get("longitude", ""),
                 "address": place.get("address", ""),
                 "rating": place.get("rating", ""),
-                "zipcode": zipcode,
             })
             _stats["found"] += 1
         
@@ -284,7 +283,7 @@ def run_zipcode_scraper(
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
 
-        fieldnames = ["hotel", "website", "phone", "lat", "long", "address", "rating", "zipcode"]
+        fieldnames = ["hotel", "website", "phone", "lat", "long", "address", "rating"]
 
         # Check for existing file and load existing hotel names
         existing_names = set()
@@ -371,21 +370,18 @@ def main():
         log("ERROR: No API key. Set SERPER_BIG_BRUCE_BABY_KEY in .env or use --api-key")
         sys.exit(1)
     
-    # Timestamp for unique filenames
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-
     # Get zip codes
     if args.zipcodes:
         zipcodes = args.zipcodes
-        output = args.output or f"scraper_output/custom/custom_zipcode_{timestamp}.csv"
+        output = args.output or f"scraper_output/custom/custom.csv"
     elif args.zipcode_file:
         zipcodes = get_zipcodes_from_file(args.zipcode_file)
         # Extract name from file for output
         file_name = os.path.basename(args.zipcode_file).replace("_postcodes.txt", "").replace("_zipcodes.txt", "")
-        output = args.output or f"scraper_output/{file_name}/{file_name}_zipcode_{timestamp}.csv"
+        output = args.output or f"scraper_output/{file_name}/{file_name}.csv"
     elif args.state:
         zipcodes = get_zipcodes_for_state(args.state)
-        output = args.output or f"scraper_output/{args.state}/{args.state}_zipcode_{timestamp}.csv"
+        output = args.output or f"scraper_output/{args.state}/{args.state}.csv"
     else:
         log("ERROR: Provide --state, --zipcodes, or --zipcode-file")
         sys.exit(1)
