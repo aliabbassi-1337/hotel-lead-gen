@@ -21,6 +21,7 @@ from dataclasses import dataclass, asdict
 
 from loguru import logger
 from playwright.async_api import async_playwright, TimeoutError as PWTimeoutError
+import httpx
 
 
 # ============================================================================
@@ -908,6 +909,38 @@ class BookingButtonFinder:
 
 
 # ============================================================================
+# HTTP PRE-CHECK (fast filter for dead URLs)
+# ============================================================================
+
+async def http_precheck(url: str, timeout: float = 5.0) -> tuple[bool, str]:
+    """
+    Quick HTTP HEAD/GET to check if URL is reachable before launching Playwright.
+    Returns (is_reachable, error_message).
+    """
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=True,
+            verify=False,  # Skip SSL verification like Playwright does
+        ) as client:
+            # Try HEAD first (faster), fall back to GET
+            try:
+                resp = await client.head(url)
+            except httpx.HTTPStatusError:
+                resp = await client.get(url)
+
+            if resp.status_code >= 400:
+                return (False, f"HTTP {resp.status_code}")
+            return (True, "")
+    except httpx.TimeoutException:
+        return (False, "timeout")
+    except httpx.ConnectError:
+        return (False, "connection_refused")
+    except Exception as e:
+        return (False, str(e)[:50])
+
+
+# ============================================================================
 # HOTEL PROCESSOR
 # ============================================================================
 
@@ -947,7 +980,14 @@ class HotelProcessor:
         if not website:
             # Not an error - just skip silently (no website to check)
             return result
-        
+
+        # Quick HTTP pre-check before launching Playwright (saves ~30s per dead URL)
+        is_reachable, precheck_error = await http_precheck(website)
+        if not is_reachable:
+            log(f"  [PRECHECK] ✗ Skipping (not reachable): {precheck_error}")
+            result.error = f"precheck_failed: {precheck_error}"
+            return result
+
         async with self.semaphore:
             result = await self._process_website(result)
         
