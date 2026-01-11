@@ -278,17 +278,42 @@ def run_zipcode_scraper(
             except Exception as e:
                 log(f"Error processing {zipcode}: {e}")
     
-    # Save results
+    # Save results (append to existing, skip duplicates)
     if all_hotels:
         output_dir = os.path.dirname(output_csv)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
-        
+
         fieldnames = ["hotel", "website", "phone", "lat", "long", "address", "rating", "zipcode"]
-        with open(output_csv, "w", newline="", encoding="utf-8") as f:
+
+        # Check for existing file and load existing hotel names
+        existing_names = set()
+        file_exists = os.path.exists(output_csv)
+        if file_exists:
+            with open(output_csv, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    name = (row.get("hotel") or "").lower().strip()
+                    if name:
+                        existing_names.add(name)
+
+        # Filter out duplicates
+        new_hotels = []
+        for h in all_hotels:
+            name = (h.get("hotel") or "").lower().strip()
+            if name and name not in existing_names:
+                new_hotels.append(h)
+                existing_names.add(name)
+
+        # Append or create
+        mode = "a" if file_exists else "w"
+        with open(output_csv, mode, newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(all_hotels)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerows(new_hotels)
+
+        log(f"New hotels: {len(new_hotels)} (skipped {len(all_hotels) - len(new_hotels)} dupes)")
     
     elapsed = time.time() - start_time
     with_website = sum(1 for h in all_hotels if h.get("website"))
@@ -341,9 +366,9 @@ def main():
     args = parser.parse_args()
     
     # Get API key
-    api_key = args.api_key or os.environ.get("SERPER_SAMI", "") 
+    api_key = args.api_key or os.environ.get("SERPER_BIG_BRUCE_BABY_KEY", "") 
     if not api_key and not args.estimate:
-        log("ERROR: No API key. Set SERPER_SAMI in .env or use --api-key")
+        log("ERROR: No API key. Set SERPER_BIG_BRUCE_BABY_KEY in .env or use --api-key")
         sys.exit(1)
     
     # Timestamp for unique filenames
