@@ -487,7 +487,7 @@ class GridScraper:
                 resp = await self._client.post(
                     SERPER_MAPS_URL,
                     headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
-                    json={"q": query, "num": 100, "ll": f"@{lat},{lng},17z"},  # 17z = tight ~500m view
+                    json={"q": query, "num": 100, "ll": f"@{lat},{lng},13z"},  # 13z = ~10km view to match cell size
                 )
 
                 if resp.status_code == 400 and "credits" in resp.text.lower():
