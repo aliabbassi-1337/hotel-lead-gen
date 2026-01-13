@@ -9,10 +9,10 @@ import os
 import math
 import asyncio
 import logging
-from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple
 
 import httpx
+from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -40,8 +40,36 @@ STATE_BOUNDS = {
     "colorado": (36.992426, 41.003444, -109.060253, -102.041524),
 }
 
-# Search terms - rotate through these per cell
-SEARCH_TERMS = ["hotels", "motels", "resorts", "boutique hotel", "inns", "lodges"]
+# Search types - diverse terms to surface different properties (from original)
+SEARCH_TYPES = [
+    "hotel",
+    "motel",
+    "resort",
+    "boutique hotel",
+    "inn",
+    "lodge",
+    "guest house",
+    "vacation rental",
+    "extended stay",
+    "suites",
+    "apart hotel",
+]
+
+# Modifiers to get niche results (rotated per cell)
+SEARCH_MODIFIERS = [
+    "",  # Plain search
+    "small",
+    "family",
+    "cheap",
+    "budget",
+    "local",
+    "independent",
+    "boutique",
+    "cozy",
+    "beachfront",
+    "waterfront",
+    "downtown",
+]
 
 # Chain filter from scripts/scrapers/grid.py
 SKIP_CHAINS = [
@@ -54,13 +82,13 @@ SKIP_CHAINS = [
 ]
 
 
-@dataclass
-class GridCell:
+class GridCell(BaseModel):
     """A grid cell for searching."""
     lat_min: float
     lat_max: float
     lng_min: float
     lng_max: float
+    index: int = 0  # Cell index for rotating search terms
 
     @property
     def center_lat(self) -> float:
@@ -81,16 +109,16 @@ class GridCell:
         """Split into 4 smaller cells."""
         mid_lat = self.center_lat
         mid_lng = self.center_lng
+        base_idx = self.index * 4
         return [
-            GridCell(self.lat_min, mid_lat, self.lng_min, mid_lng),
-            GridCell(self.lat_min, mid_lat, mid_lng, self.lng_max),
-            GridCell(mid_lat, self.lat_max, self.lng_min, mid_lng),
-            GridCell(mid_lat, self.lat_max, mid_lng, self.lng_max),
+            GridCell(lat_min=self.lat_min, lat_max=mid_lat, lng_min=self.lng_min, lng_max=mid_lng, index=base_idx),
+            GridCell(lat_min=self.lat_min, lat_max=mid_lat, lng_min=mid_lng, lng_max=self.lng_max, index=base_idx + 1),
+            GridCell(lat_min=mid_lat, lat_max=self.lat_max, lng_min=self.lng_min, lng_max=mid_lng, index=base_idx + 2),
+            GridCell(lat_min=mid_lat, lat_max=self.lat_max, lng_min=mid_lng, lng_max=self.lng_max, index=base_idx + 3),
         ]
 
 
-@dataclass
-class ScrapedHotel:
+class ScrapedHotel(BaseModel):
     """Hotel data from scraper."""
     name: str
     website: Optional[str] = None
@@ -104,8 +132,7 @@ class ScrapedHotel:
     review_count: Optional[int] = None
 
 
-@dataclass
-class ScrapeStats:
+class ScrapeStats(BaseModel):
     """Scrape run statistics."""
     hotels_found: int = 0
     api_calls: int = 0
@@ -215,6 +242,7 @@ class GridScraper:
         lng_step = (lng_max - lng_min) / n_lng
 
         cells = []
+        idx = 0
         for i in range(n_lat):
             for j in range(n_lng):
                 cells.append(GridCell(
@@ -222,7 +250,9 @@ class GridScraper:
                     lat_max=lat_min + (i + 1) * lat_step,
                     lng_min=lng_min + j * lng_step,
                     lng_max=lng_min + (j + 1) * lng_step,
+                    index=idx,
                 ))
+                idx += 1
         return cells
 
     async def _search_cell(
@@ -230,25 +260,46 @@ class GridScraper:
         client: httpx.AsyncClient,
         cell: GridCell,
     ) -> Tuple[List[ScrapedHotel], bool]:
-        """Search a cell. Returns (hotels, hit_api_limit)."""
+        """Search a cell with rotated search types and modifiers. Returns (hotels, hit_api_limit)."""
         hotels: List[ScrapedHotel] = []
         hit_limit = False
 
-        for term in SEARCH_TERMS:
-            if self._out_of_credits:
-                break
+        # Pick 4 types for this cell (rotate through them based on cell index)
+        num_types = len(SEARCH_TYPES)
+        types_for_cell = [
+            SEARCH_TYPES[cell.index % num_types],
+            SEARCH_TYPES[(cell.index + 3) % num_types],
+            SEARCH_TYPES[(cell.index + 6) % num_types],
+            SEARCH_TYPES[(cell.index + 9) % num_types],
+        ]
 
-            places = await self._search_serper(client, term, cell.center_lat, cell.center_lng)
+        # Pick 3 modifiers for this cell (rotate through them)
+        num_mods = len(SEARCH_MODIFIERS)
+        modifiers_for_cell = [
+            SEARCH_MODIFIERS[cell.index % num_mods],
+            SEARCH_MODIFIERS[(cell.index + 4) % num_mods],
+            SEARCH_MODIFIERS[(cell.index + 8) % num_mods],
+        ]
 
-            if len(places) >= API_RESULT_LIMIT:
-                hit_limit = True
+        for search_type in types_for_cell:
+            for modifier in modifiers_for_cell:
+                if self._out_of_credits:
+                    break
 
-            for place in places:
-                hotel = self._process_place(place)
-                if hotel:
-                    hotels.append(hotel)
+                # Build query with modifier
+                query = f"{modifier} {search_type}".strip() if modifier else search_type
 
-            await asyncio.sleep(0.05)
+                places = await self._search_serper(client, query, cell.center_lat, cell.center_lng)
+
+                if len(places) >= API_RESULT_LIMIT:
+                    hit_limit = True
+
+                for place in places:
+                    hotel = self._process_place(place)
+                    if hotel:
+                        hotels.append(hotel)
+
+                await asyncio.sleep(0.15)  # Rate limit between queries
 
         return hotels, hit_limit
 
@@ -269,7 +320,7 @@ class GridScraper:
             resp = await client.post(
                 SERPER_MAPS_URL,
                 headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
-                json={"q": query, "num": 100, "ll": f"@{lat},{lng},14z"},
+                json={"q": query, "num": 100, "ll": f"@{lat},{lng},17z"},  # 17z = tight ~500m view
             )
 
             if resp.status_code == 400 and "credits" in resp.text.lower():

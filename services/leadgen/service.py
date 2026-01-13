@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 
 from services.leadgen import repo
-from services.leadgen.grid_scraper import GridScraper, ScrapedHotel, ScrapeStats
+from services.leadgen.grid_scraper import GridScraper, ScrapedHotel
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +40,6 @@ class IService(ABC):
         Detect booking engines for hotels with status=0 (scraped).
         Updates status to 1 (detected) or 99 (no_booking_engine).
         Returns number of hotels processed.
-        """
-        pass
-
-    @abstractmethod
-    async def get_pending_detection_count(self) -> int:
-        """
-        Count hotels waiting for detection (status=0).
         """
         pass
 
@@ -171,12 +164,3 @@ class Service(IService):
         # TODO: Integrate detect.py script
         logger.warning("detect_booking_engines not yet implemented")
         return 0
-
-    async def get_pending_detection_count(self) -> int:
-        """
-        Count hotels waiting for detection (status=0).
-
-        Returns:
-            Number of hotels with status=0
-        """
-        return await repo.count_hotels_by_status(status=0)
