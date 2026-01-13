@@ -3,6 +3,10 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 import asyncpg
 import aiosql
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Load queries from SQL files
 queries = aiosql.from_path(
@@ -24,7 +28,7 @@ async def init_db():
             database=os.getenv("SADIE_DB_NAME"),
             user=os.getenv("SADIE_DB_USER"),
             password=os.getenv("SADIE_DB_PASSWORD"),
-            server_settings={'search_path': 'sadie_gtm'},
+            server_settings={'search_path': 'sadie_gtm, public'},
             min_size=5,
             max_size=20,
             command_timeout=60,
