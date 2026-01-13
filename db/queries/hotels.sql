@@ -76,3 +76,33 @@ RETURNING id;
 -- Delete a hotel by ID
 DELETE FROM hotels
 WHERE id = :hotel_id;
+
+-- name: get_hotels_by_status
+-- Get hotels by pipeline status with limit
+SELECT
+    id,
+    name,
+    website,
+    phone_google,
+    phone_website,
+    email,
+    city,
+    state,
+    country,
+    address,
+    ST_Y(location::geometry) AS latitude,
+    ST_X(location::geometry) AS longitude,
+    rating,
+    review_count,
+    status,
+    source,
+    created_at,
+    updated_at
+FROM hotels
+WHERE status = :status
+ORDER BY created_at DESC
+LIMIT :limit;
+
+-- name: count_hotels_by_status$
+-- Count hotels with a specific status
+SELECT COUNT(*) FROM hotels WHERE status = :status;
