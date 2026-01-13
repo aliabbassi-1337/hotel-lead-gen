@@ -81,16 +81,25 @@ SKIP_CHAINS = [
     "four seasons", "ritz-carlton", "st. regis", "fairmont",
 ]
 
-# Website domains to skip (big chains, aggregators, social media)
+# Website domains to skip (big chains, aggregators, social media, junk)
 SKIP_DOMAINS = [
+    # Big chains
     "marriott.com", "hilton.com", "hyatt.com", "ihg.com",
-    "wyndhamhotels.com", "choicehotels.com", "bestwestern.com",
+    "wyndham.com", "wyndhamhotels.com", "choicehotels.com", "bestwestern.com",
     "radissonhotels.com", "accor.com", "fourseasons.com",
     "ritzcarlton.com", "starwoodhotels.com",
+    # OTAs and aggregators
     "booking.com", "expedia.com", "hotels.com", "trivago.com",
-    "tripadvisor.com", "kayak.com", "priceline.com",
-    "facebook.com", "instagram.com", "twitter.com", "yelp.com",
-    "google.com", "airbnb.com", "vrbo.com",
+    "tripadvisor.com", "kayak.com", "priceline.com", "agoda.com",
+    "airbnb.com", "vrbo.com",
+    # Social media
+    "facebook.com", "instagram.com", "twitter.com", "youtube.com",
+    "tiktok.com", "linkedin.com", "yelp.com",
+    # Other junk
+    "google.com",
+    # Government/education (not hotels)
+    ".gov", ".edu", ".mil",
+    "dnr.", "parks.", "recreation.",
 ]
 
 
