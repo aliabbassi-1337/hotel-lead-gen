@@ -26,6 +26,10 @@ INITIAL_CELL_SIZE_KM = 10.0  # Start with 10km cells
 MIN_CELL_SIZE_KM = 2.5       # Don't subdivide below 2.5km
 API_RESULT_LIMIT = 20        # Serper returns max 20 results - subdivide if hit
 
+# Concurrency settings
+MAX_CONCURRENT_CELLS = 5     # Process up to 5 cells concurrently
+MAX_CONCURRENT_REQUESTS = 10 # Max concurrent API requests
+
 # State bounding boxes from scripts/scrapers/grid.py
 STATE_BOUNDS = {
     "florida": (24.396308, 31.000968, -87.634896, -79.974307),
@@ -209,10 +213,11 @@ class GridScraper:
         lng_min: float,
         lng_max: float,
     ) -> Tuple[List[ScrapedHotel], ScrapeStats]:
-        """Scrape with adaptive subdivision."""
+        """Scrape with adaptive subdivision using concurrent cell processing."""
         self._seen = set()
         self._stats = ScrapeStats()
         self._out_of_credits = False
+        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
         hotels: List[ScrapedHotel] = []
 
@@ -221,26 +226,38 @@ class GridScraper:
         logger.info(f"Starting scrape: {len(cells)} initial cells")
 
         async with httpx.AsyncClient(timeout=30.0) as client:
+            self._client = client
+
             while cells and not self._out_of_credits:
-                cell = cells.pop(0)
-                self._stats.cells_searched += 1
+                # Process cells in batches concurrently
+                batch = []
+                for _ in range(min(MAX_CONCURRENT_CELLS, len(cells))):
+                    if cells:
+                        batch.append(cells.pop(0))
 
-                cell_hotels, hit_limit = await self._search_cell(client, cell)
-                hotels.extend(cell_hotels)
+                # Run batch concurrently
+                results = await asyncio.gather(*[self._process_cell(cell) for cell in batch])
 
-                # Adaptive subdivision: if we hit API limit and cell is large enough
-                if hit_limit and cell.size_km > MIN_CELL_SIZE_KM * 2:
-                    subcells = cell.subdivide()
-                    cells.extend(subcells)
-                    self._stats.cells_subdivided += 1
-                    logger.debug(f"Subdivided cell at ({cell.center_lat:.3f}, {cell.center_lng:.3f})")
+                # Collect results and handle subdivision
+                for cell, (cell_hotels, hit_limit) in zip(batch, results):
+                    self._stats.cells_searched += 1
+                    hotels.extend(cell_hotels)
 
-                await asyncio.sleep(0.1)  # Rate limit
+                    # Adaptive subdivision: if we hit API limit and cell is large enough
+                    if hit_limit and cell.size_km > MIN_CELL_SIZE_KM * 2:
+                        subcells = cell.subdivide()
+                        cells.extend(subcells)
+                        self._stats.cells_subdivided += 1
+                        logger.debug(f"Subdivided cell at ({cell.center_lat:.3f}, {cell.center_lng:.3f})")
 
         self._stats.hotels_found = len(hotels)
         logger.info(f"Scrape done: {len(hotels)} hotels, {self._stats.api_calls} API calls")
 
         return hotels, self._stats
+
+    async def _process_cell(self, cell: GridCell) -> Tuple[List[ScrapedHotel], bool]:
+        """Process a single cell (wrapper for concurrent execution)."""
+        return await self._search_cell(cell)
 
     def _generate_grid(
         self,
@@ -278,10 +295,9 @@ class GridScraper:
 
     async def _search_cell(
         self,
-        client: httpx.AsyncClient,
         cell: GridCell,
     ) -> Tuple[List[ScrapedHotel], bool]:
-        """Search a cell with rotated search types and modifiers. Returns (hotels, hit_api_limit)."""
+        """Search a cell with rotated search types and modifiers concurrently."""
         hotels: List[ScrapedHotel] = []
         hit_limit = False
 
@@ -302,61 +318,64 @@ class GridScraper:
             SEARCH_MODIFIERS[(cell.index + 8) % num_mods],
         ]
 
+        # Build all queries for this cell
+        queries = []
         for search_type in types_for_cell:
             for modifier in modifiers_for_cell:
-                if self._out_of_credits:
-                    break
-
-                # Build query with modifier
                 query = f"{modifier} {search_type}".strip() if modifier else search_type
+                queries.append(query)
 
-                places = await self._search_serper(client, query, cell.center_lat, cell.center_lng)
+        # Execute all queries concurrently
+        results = await asyncio.gather(*[
+            self._search_serper(query, cell.center_lat, cell.center_lng)
+            for query in queries
+        ])
 
-                if len(places) >= API_RESULT_LIMIT:
-                    hit_limit = True
+        # Process results
+        for places in results:
+            if len(places) >= API_RESULT_LIMIT:
+                hit_limit = True
 
-                for place in places:
-                    hotel = self._process_place(place)
-                    if hotel:
-                        hotels.append(hotel)
-
-                await asyncio.sleep(0.15)  # Rate limit between queries
+            for place in places:
+                hotel = self._process_place(place)
+                if hotel:
+                    hotels.append(hotel)
 
         return hotels, hit_limit
 
     async def _search_serper(
         self,
-        client: httpx.AsyncClient,
         query: str,
         lat: float,
         lng: float,
     ) -> List[dict]:
-        """Call Serper Maps API."""
+        """Call Serper Maps API with semaphore for rate limiting."""
         if self._out_of_credits:
             return []
 
-        self._stats.api_calls += 1
+        async with self._semaphore:
+            self._stats.api_calls += 1
 
-        try:
-            resp = await client.post(
-                SERPER_MAPS_URL,
-                headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
-                json={"q": query, "num": 100, "ll": f"@{lat},{lng},17z"},  # 17z = tight ~500m view
-            )
+            try:
+                resp = await self._client.post(
+                    SERPER_MAPS_URL,
+                    headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
+                    json={"q": query, "num": 100, "ll": f"@{lat},{lng},17z"},  # 17z = tight ~500m view
+                )
 
-            if resp.status_code == 400 and "credits" in resp.text.lower():
-                logger.warning("Out of Serper credits")
-                self._out_of_credits = True
+                if resp.status_code == 400 and "credits" in resp.text.lower():
+                    logger.warning("Out of Serper credits")
+                    self._out_of_credits = True
+                    return []
+
+                if resp.status_code != 200:
+                    logger.error(f"Serper error {resp.status_code}: {resp.text[:100]}")
+                    return []
+
+                return resp.json().get("places", [])
+            except Exception as e:
+                logger.error(f"Serper request failed: {e}")
                 return []
-
-            if resp.status_code != 200:
-                logger.error(f"Serper error {resp.status_code}: {resp.text[:100]}")
-                return []
-
-            return resp.json().get("places", [])
-        except Exception as e:
-            logger.error(f"Serper request failed: {e}")
-            return []
 
     def _process_place(self, place: dict) -> Optional[ScrapedHotel]:
         """Process place into ScrapedHotel, filtering chains/duplicates."""
