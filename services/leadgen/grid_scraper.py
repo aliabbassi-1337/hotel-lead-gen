@@ -8,18 +8,28 @@ Uses adaptive subdivision: starts with coarse grid, subdivides dense cells.
 import os
 import math
 import asyncio
-import logging
 from typing import List, Optional, Set, Tuple
 
 import httpx
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from loguru import logger
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
-
 SERPER_MAPS_URL = "https://google.serper.dev/maps"
+
+# City coordinates for quick lookups
+CITY_COORDINATES = {
+    "miami_beach": (25.7907, -80.1300),
+    "miami": (25.7617, -80.1918),
+    "orlando": (28.5383, -81.3792),
+    "tampa": (27.9506, -82.4572),
+    "los_angeles": (34.0522, -118.2437),
+    "san_francisco": (37.7749, -122.4194),
+    "new_york": (40.7128, -74.0060),
+    "las_vegas": (36.1699, -115.1398),
+}
 
 # Adaptive subdivision settings (from context/grid_scraper_adaptive.md)
 INITIAL_CELL_SIZE_KM = 10.0  # Start with 10km cells
@@ -182,9 +192,9 @@ class GridScraper:
     """Adaptive grid-based hotel scraper using Serper Maps API."""
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.environ.get("SERPER_SAMI", "")
+        self.api_key = api_key or os.environ.get("SERPER_API_KEY", "")
         if not self.api_key:
-            raise ValueError("No Serper API key. Set SERPER_SAMI env var or pass api_key.")
+            raise ValueError("No Serper API key. Set SERPER_API_KEY env var or pass api_key.")
 
         self._seen: Set[str] = set()
         self._stats = ScrapeStats()

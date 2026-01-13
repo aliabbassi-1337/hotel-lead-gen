@@ -1,16 +1,15 @@
 """LeadGen Service - Scraping and detection pipeline."""
 
-import logging
 from abc import ABC, abstractmethod
 from typing import List, Optional
+
+from loguru import logger
 
 from services.leadgen import repo
 from services.leadgen.grid_scraper import GridScraper, ScrapedHotel, ScrapeEstimate
 
 # Re-export for public API
 __all__ = ["IService", "Service", "ScrapeEstimate"]
-
-logger = logging.getLogger(__name__)
 
 
 class IService(ABC):
