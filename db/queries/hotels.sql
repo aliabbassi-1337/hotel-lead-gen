@@ -76,3 +76,87 @@ RETURNING id;
 -- Delete a hotel by ID
 DELETE FROM hotels
 WHERE id = :hotel_id;
+
+-- name: get_hotels_pending_detection
+-- Get hotels that need booking engine detection
+-- Criteria: status=0 (scraped), website not null, not a big chain
+SELECT
+    id,
+    name,
+    website,
+    phone_google,
+    phone_website,
+    email,
+    city,
+    state,
+    country,
+    address,
+    ST_Y(location::geometry) AS latitude,
+    ST_X(location::geometry) AS longitude,
+    rating,
+    review_count,
+    status,
+    source,
+    created_at,
+    updated_at
+FROM hotels
+WHERE status = 0
+  AND website IS NOT NULL
+  AND website != ''
+  AND LOWER(website) NOT LIKE '%marriott.com%'
+  AND LOWER(website) NOT LIKE '%hilton.com%'
+  AND LOWER(website) NOT LIKE '%ihg.com%'
+  AND LOWER(website) NOT LIKE '%hyatt.com%'
+  AND LOWER(website) NOT LIKE '%wyndham.com%'
+  AND LOWER(website) NOT LIKE '%choicehotels.com%'
+  AND LOWER(website) NOT LIKE '%bestwestern.com%'
+  AND LOWER(website) NOT LIKE '%radissonhotels.com%'
+  AND LOWER(website) NOT LIKE '%accor.com%'
+ORDER BY created_at ASC
+LIMIT :limit;
+
+-- name: update_hotel_status!
+-- Update hotel status after detection
+UPDATE hotels
+SET status = :status,
+    phone_website = COALESCE(:phone_website, phone_website),
+    email = COALESCE(:email, email),
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = :hotel_id;
+
+-- name: get_booking_engine_by_name^
+-- Get booking engine by name
+SELECT id, name, domains, tier, is_active
+FROM booking_engines
+WHERE name = :name;
+
+-- name: insert_booking_engine<!
+-- Insert a new booking engine (tier 2 = unknown/discovered)
+INSERT INTO booking_engines (name, domains, tier)
+VALUES (:name, :domains, :tier)
+ON CONFLICT (name) DO UPDATE SET
+    domains = COALESCE(EXCLUDED.domains, booking_engines.domains)
+RETURNING id;
+
+-- name: insert_hotel_booking_engine!
+-- Link hotel to detected booking engine
+INSERT INTO hotel_booking_engines (
+    hotel_id,
+    booking_engine_id,
+    booking_url,
+    detection_method,
+    detected_at,
+    updated_at
+) VALUES (
+    :hotel_id,
+    :booking_engine_id,
+    :booking_url,
+    :detection_method,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP
+)
+ON CONFLICT (hotel_id) DO UPDATE SET
+    booking_engine_id = EXCLUDED.booking_engine_id,
+    booking_url = EXCLUDED.booking_url,
+    detection_method = EXCLUDED.detection_method,
+    updated_at = CURRENT_TIMESTAMP;

@@ -1,8 +1,9 @@
 """Repository for leadgen service database operations."""
 
-from typing import Optional
+from typing import Optional, List
 from db.client import queries, get_conn
 from db.models.hotel import Hotel
+from db.models.booking_engine import BookingEngine
 
 
 async def get_hotel_by_id(hotel_id: int) -> Optional[Hotel]:
@@ -58,3 +59,83 @@ async def delete_hotel(hotel_id: int) -> None:
     """Delete a hotel by ID."""
     async with get_conn() as conn:
         await queries.delete_hotel(conn, hotel_id=hotel_id)
+
+
+async def get_hotels_pending_detection(limit: int = 100) -> List[Hotel]:
+    """Get hotels that need booking engine detection.
+
+    Criteria:
+    - status = 0 (scraped)
+    - website is not null
+    - not a big chain (Marriott, Hilton, IHG, Hyatt, Wyndham, etc.)
+    """
+    async with get_conn() as conn:
+        results = await queries.get_hotels_pending_detection(conn, limit=limit)
+        return [Hotel.model_validate(dict(row)) for row in results]
+
+
+async def update_hotel_status(
+    hotel_id: int,
+    status: int,
+    phone_website: Optional[str] = None,
+    email: Optional[str] = None,
+) -> None:
+    """Update hotel status after detection.
+
+    Status values:
+    - 1 = detected (booking engine found)
+    - 99 = no_booking_engine (dead end)
+    """
+    async with get_conn() as conn:
+        await queries.update_hotel_status(
+            conn,
+            hotel_id=hotel_id,
+            status=status,
+            phone_website=phone_website,
+            email=email,
+        )
+
+
+async def get_booking_engine_by_name(name: str) -> Optional[BookingEngine]:
+    """Get booking engine by name."""
+    async with get_conn() as conn:
+        result = await queries.get_booking_engine_by_name(conn, name=name)
+        if result:
+            return BookingEngine.model_validate(dict(result))
+        return None
+
+
+async def insert_booking_engine(
+    name: str,
+    domains: Optional[List[str]] = None,
+    tier: int = 2,
+) -> int:
+    """Insert a new booking engine and return the ID.
+
+    tier=2 means unknown/discovered engine.
+    """
+    async with get_conn() as conn:
+        result = await queries.insert_booking_engine(
+            conn,
+            name=name,
+            domains=domains,
+            tier=tier,
+        )
+        return result
+
+
+async def insert_hotel_booking_engine(
+    hotel_id: int,
+    booking_engine_id: int,
+    booking_url: Optional[str] = None,
+    detection_method: Optional[str] = None,
+) -> None:
+    """Link hotel to detected booking engine."""
+    async with get_conn() as conn:
+        await queries.insert_hotel_booking_engine(
+            conn,
+            hotel_id=hotel_id,
+            booking_engine_id=booking_engine_id,
+            booking_url=booking_url,
+            detection_method=detection_method,
+        )
