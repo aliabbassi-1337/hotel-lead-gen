@@ -41,6 +41,14 @@ class IService(ABC):
         pass
 
     @abstractmethod
+    async def get_hotels_pending_detection(self, limit: int = 100) -> List:
+        """
+        Get hotels that need booking engine detection.
+        Returns list of Hotel models.
+        """
+        pass
+
+    @abstractmethod
     async def get_pending_detection_count(self) -> int:
         """
         Count hotels waiting for detection (status=0).
@@ -146,6 +154,10 @@ class Service(IService):
 
         except Exception as e:
             logger.error(f"Error saving detection result for hotel {result.hotel_id}: {e}")
+
+    async def get_hotels_pending_detection(self, limit: int = 100) -> List:
+        """Get hotels that need booking engine detection."""
+        return await repo.get_hotels_pending_detection(limit=limit)
 
     async def get_pending_detection_count(self) -> int:
         """Count hotels waiting for detection (status=0)."""

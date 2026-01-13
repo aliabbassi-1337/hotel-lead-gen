@@ -112,7 +112,6 @@ WHERE status = 0
   AND LOWER(website) NOT LIKE '%bestwestern.com%'
   AND LOWER(website) NOT LIKE '%radissonhotels.com%'
   AND LOWER(website) NOT LIKE '%accor.com%'
-ORDER BY created_at ASC
 LIMIT :limit;
 
 -- name: update_hotel_status!
