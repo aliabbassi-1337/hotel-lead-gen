@@ -5,7 +5,10 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 
 from services.leadgen import repo
-from services.leadgen.grid_scraper import GridScraper, ScrapedHotel
+from services.leadgen.grid_scraper import GridScraper, ScrapedHotel, ScrapeEstimate
+
+# Re-export for public API
+__all__ = ["IService", "Service", "ScrapeEstimate"]
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,21 @@ class IService(ABC):
         Updates status to 1 (detected) or 99 (no_booking_engine).
         Returns number of hotels processed.
         """
+        pass
+
+    @abstractmethod
+    def estimate_region(
+        self,
+        center_lat: float,
+        center_lng: float,
+        radius_km: float
+    ) -> ScrapeEstimate:
+        """Estimate cost for scraping a circular region."""
+        pass
+
+    @abstractmethod
+    def estimate_state(self, state: str) -> ScrapeEstimate:
+        """Estimate cost for scraping a state."""
         pass
 
 
@@ -164,3 +182,18 @@ class Service(IService):
         # TODO: Integrate detect.py script
         logger.warning("detect_booking_engines not yet implemented")
         return 0
+
+    def estimate_region(
+        self,
+        center_lat: float,
+        center_lng: float,
+        radius_km: float
+    ) -> ScrapeEstimate:
+        """Estimate cost for scraping a circular region."""
+        scraper = GridScraper.__new__(GridScraper)  # Skip __init__ validation
+        return scraper.estimate_region(center_lat, center_lng, radius_km)
+
+    def estimate_state(self, state: str) -> ScrapeEstimate:
+        """Estimate cost for scraping a state."""
+        scraper = GridScraper.__new__(GridScraper)  # Skip __init__ validation
+        return scraper.estimate_state(state)

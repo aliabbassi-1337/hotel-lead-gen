@@ -18,8 +18,7 @@ import argparse
 import logging
 
 from db.client import init_db, close_db
-from services.leadgen.service import Service
-from services.leadgen.grid_scraper import GridScraper, ScrapeEstimate
+from services.leadgen.service import Service, ScrapeEstimate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -96,32 +95,19 @@ def main():
 
     args = parser.parse_args()
 
-    # Create scraper for estimates (doesn't need API key for estimates)
-    try:
-        scraper = GridScraper()
-    except ValueError:
-        # No API key - OK for estimates
-        scraper = None
+    # Service for estimates and scraping
+    service = Service()
 
     if args.state:
         if args.estimate:
-            if scraper is None:
-                # Create scraper without validation for estimate
-                import os
-                os.environ.setdefault("SERPER_SAMI", "dummy")
-                scraper = GridScraper()
-            estimate = scraper.estimate_state(args.state)
+            estimate = service.estimate_state(args.state)
             print_estimate(estimate, f"State: {args.state.title()}")
         else:
             asyncio.run(scrape_state_workflow(args.state))
 
     elif args.center_lat and args.center_lng:
         if args.estimate:
-            if scraper is None:
-                import os
-                os.environ.setdefault("SERPER_SAMI", "dummy")
-                scraper = GridScraper()
-            estimate = scraper.estimate_region(args.center_lat, args.center_lng, args.radius_km)
+            estimate = service.estimate_region(args.center_lat, args.center_lng, args.radius_km)
             print_estimate(estimate, f"Region: ({args.center_lat}, {args.center_lng}) r={args.radius_km}km")
         else:
             asyncio.run(scrape_region_workflow(args.center_lat, args.center_lng, args.radius_km))
