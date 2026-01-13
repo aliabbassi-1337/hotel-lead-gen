@@ -5,11 +5,11 @@ Scrapes hotels in a given region using the adaptive grid scraper.
 
 Usage:
     # Estimate costs first
-    uv run python workflows/scrape_region.py --center-lat 25.7907 --center-lng -80.1300 --radius-km 3 --estimate
+    uv run python workflows/scrape_region.py --city miami_beach --estimate
     uv run python workflows/scrape_region.py --state florida --estimate
 
     # Run scrape
-    uv run python workflows/scrape_region.py --center-lat 25.7907 --center-lng -80.1300 --radius-km 3
+    uv run python workflows/scrape_region.py --city miami_beach --radius-km 5
     uv run python workflows/scrape_region.py --state florida
 """
 
@@ -18,7 +18,7 @@ import argparse
 import logging
 
 from db.client import init_db, close_db
-from services.leadgen.service import Service, ScrapeEstimate
+from services.leadgen.service import Service, ScrapeEstimate, CITY_COORDINATES
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,6 +82,10 @@ async def scrape_state_workflow(state: str) -> int:
 def main():
     parser = argparse.ArgumentParser(description="Scrape hotels in a region")
 
+    # Region by city name (uses CITY_COORDINATES lookup)
+    city_names = list(CITY_COORDINATES.keys())
+    parser.add_argument("--city", type=str, choices=city_names, help=f"City name: {', '.join(city_names)}")
+
     # Region by center + radius
     parser.add_argument("--center-lat", type=float, help="Center latitude")
     parser.add_argument("--center-lng", type=float, help="Center longitude")
@@ -98,7 +102,16 @@ def main():
     # Service for estimates and scraping
     service = Service()
 
-    if args.state:
+    # Resolve city to coordinates
+    if args.city:
+        lat, lng = CITY_COORDINATES[args.city]
+        if args.estimate:
+            estimate = service.estimate_region(lat, lng, args.radius_km)
+            print_estimate(estimate, f"City: {args.city.replace('_', ' ').title()} r={args.radius_km}km")
+        else:
+            asyncio.run(scrape_region_workflow(lat, lng, args.radius_km))
+
+    elif args.state:
         if args.estimate:
             estimate = service.estimate_state(args.state)
             print_estimate(estimate, f"State: {args.state.title()}")
@@ -113,7 +126,7 @@ def main():
             asyncio.run(scrape_region_workflow(args.center_lat, args.center_lng, args.radius_km))
 
     else:
-        parser.error("Provide --state OR --center-lat and --center-lng")
+        parser.error("Provide --city, --state, or --center-lat and --center-lng")
 
 
 if __name__ == "__main__":

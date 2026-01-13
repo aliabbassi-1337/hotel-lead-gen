@@ -6,10 +6,10 @@ from typing import List, Optional
 from loguru import logger
 
 from services.leadgen import repo
-from services.leadgen.grid_scraper import GridScraper, ScrapedHotel, ScrapeEstimate
+from services.leadgen.grid_scraper import GridScraper, ScrapedHotel, ScrapeEstimate, CITY_COORDINATES
 
 # Re-export for public API
-__all__ = ["IService", "Service", "ScrapeEstimate"]
+__all__ = ["IService", "Service", "ScrapeEstimate", "CITY_COORDINATES"]
 
 
 class IService(ABC):
