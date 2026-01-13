@@ -231,6 +231,9 @@ async def http_precheck(url: str, timeout: float = 5.0) -> Tuple[bool, str]:
         ) as client:
             try:
                 resp = await client.head(url)
+                # Some servers reject HEAD, fall back to GET
+                if resp.status_code == 405:
+                    resp = await client.get(url)
             except httpx.HTTPStatusError:
                 resp = await client.get(url)
             if resp.status_code >= 400:

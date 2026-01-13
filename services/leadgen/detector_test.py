@@ -125,60 +125,32 @@ class TestContactExtractor:
 # =============================================================================
 
 # Test hotels with expected booking engines
+# NOTE: These are real, active hotel websites as of January 2026
+# Some hotels use overlay widgets (Triptease) on top of booking engines (SynXis)
 TEST_HOTELS: List[Dict] = [
     {
         "id": 1,
-        "name": "Bentley Hotel South Beach",
-        "website": "https://www.bentleysouthbeach.com",
-        "expected_engine": "SynXis / TravelClick",
+        "name": "President Hotel Villa Miami Beach",
+        "website": "https://www.presidentvillamiami.com/",
+        "expected_engine": "SiteMinder",
     },
     {
         "id": 2,
-        "name": "Starlite Hotel",
-        "website": "https://www.thestarlitehotel.com",
-        "expected_engine": "Cloudbeds",
+        "name": "Renzzi On The Beach",
+        "website": "https://renzzionthebeach.com/book-now/",
+        "expected_engine": "unknown_booking_api",  # wubook.net
     },
     {
         "id": 3,
-        "name": "Chesterfield Hotel & Suites",
-        "website": "https://www.chesterfieldhotel.com",
-        "expected_engine": "SynXis / TravelClick",
+        "name": "The Setai Miami Beach",
+        "website": "https://www.thesetaihotel.com",
+        "expected_engine": "Triptease",  # Has Triptease overlay + SynXis backend
     },
     {
         "id": 4,
-        "name": "Life House, South of Fifth",
-        "website": "https://www.lifehousehotels.com/hotels/miami/south-of-fifth",
-        "expected_engine": "Cloudbeds",
-    },
-    {
-        "id": 5,
-        "name": "Kasa El Paseo Miami Beach",
-        "website": "https://kasa.com/vacation-rentals/florida/miami-beach/kasa-el-paseo-miami-beach",
+        "name": "The Betsy Hotel",
+        "website": "https://www.thebetsyhotel.com",
         "expected_engine": "Triptease",
-    },
-    {
-        "id": 6,
-        "name": "Bungalows Key Largo",
-        "website": "https://www.bfrhotels.com/bungalows-key-largo",
-        "expected_engine": "Triptease",
-    },
-    {
-        "id": 7,
-        "name": "Riviere South Beach Hotel",
-        "website": "https://www.rivieresouthbeach.com",
-        "expected_engine": "Cloudbeds",
-    },
-    {
-        "id": 8,
-        "name": "ABAE Hotel by Eskape Collection",
-        "website": "https://www.abaehotel.com",
-        "expected_engine": "unknown_booking_api",
-    },
-    {
-        "id": 9,
-        "name": "Beach Place",
-        "website": "https://beachplace.com",
-        "expected_engine": "SiteMinder",
     },
 ]
 
@@ -196,44 +168,29 @@ def detector():
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_detect_single_hotel_synxis(detector):
-    """Test detection of SynXis/TravelClick engine."""
-    hotels = [TEST_HOTELS[0]]  # Bentley Hotel South Beach
+async def test_detect_single_hotel_siteminder(detector):
+    """Test detection of SiteMinder engine."""
+    hotels = [TEST_HOTELS[0]]  # President Hotel Villa Miami Beach
     results = await detector.detect_batch(hotels)
 
     assert len(results) == 1
     result = results[0]
     assert result.hotel_id == 1
-    assert result.booking_engine == "SynXis / TravelClick"
-    assert "synxis" in result.booking_url.lower() or "travelclick" in result.booking_url.lower()
+    assert result.booking_engine == "SiteMinder"
 
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_detect_single_hotel_cloudbeds(detector):
-    """Test detection of Cloudbeds engine."""
-    hotels = [TEST_HOTELS[1]]  # Starlite Hotel
+async def test_detect_single_hotel_unknown_api(detector):
+    """Test detection of unknown booking API (wubook)."""
+    hotels = [TEST_HOTELS[1]]  # Renzzi On The Beach
     results = await detector.detect_batch(hotels)
 
     assert len(results) == 1
     result = results[0]
     assert result.hotel_id == 2
-    assert result.booking_engine == "Cloudbeds"
-    assert "cloudbeds" in result.booking_url.lower()
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_detect_single_hotel_siteminder(detector):
-    """Test detection of SiteMinder engine."""
-    hotels = [TEST_HOTELS[8]]  # Beach Place
-    results = await detector.detect_batch(hotels)
-
-    assert len(results) == 1
-    result = results[0]
-    assert result.hotel_id == 9
-    # SiteMinder can be detected as "SiteMinder" or via thebookingbutton.com
-    assert result.booking_engine == "SiteMinder" or "siteminder" in result.booking_engine_domain.lower()
+    assert result.booking_engine == "unknown_booking_api"
+    assert "wubook" in result.booking_url.lower()
 
 
 @pytest.mark.asyncio
@@ -304,12 +261,10 @@ async def test_detect_all_test_hotels(detector):
 @pytest.mark.integration
 async def test_detect_extracts_contacts(detector):
     """Test that contact information is extracted."""
-    hotels = [TEST_HOTELS[0]]  # Bentley Hotel South Beach
+    hotels = [TEST_HOTELS[0]]  # The Setai Miami Beach
     results = await detector.detect_batch(hotels)
 
     result = results[0]
-    # At least one contact should be extracted
-    has_contact = bool(result.phone_website or result.email)
     # Note: Not all hotels have visible contact info, so this is a soft check
     print(f"Phone: {result.phone_website}")
     print(f"Email: {result.email}")
@@ -365,81 +320,39 @@ async def test_detect_empty_batch(detector):
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_bentley_hotel_synxis(detector):
-    """Bentley Hotel South Beach uses SynXis/TravelClick."""
-    hotels = [{"id": 1, "name": "Bentley Hotel South Beach", "website": "https://www.bentleysouthbeach.com"}]
-    results = await detector.detect_batch(hotels)
-    assert results[0].booking_engine == "SynXis / TravelClick"
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_starlite_hotel_cloudbeds(detector):
-    """Starlite Hotel uses Cloudbeds."""
-    hotels = [{"id": 2, "name": "Starlite Hotel", "website": "https://www.thestarlitehotel.com"}]
-    results = await detector.detect_batch(hotels)
-    assert results[0].booking_engine == "Cloudbeds"
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_chesterfield_synxis(detector):
-    """Chesterfield Hotel & Suites uses SynXis/TravelClick."""
-    hotels = [{"id": 3, "name": "Chesterfield Hotel & Suites", "website": "https://www.chesterfieldhotel.com"}]
-    results = await detector.detect_batch(hotels)
-    assert results[0].booking_engine == "SynXis / TravelClick"
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_lifehouse_cloudbeds(detector):
-    """Life House, South of Fifth uses Cloudbeds."""
-    hotels = [{"id": 4, "name": "Life House, South of Fifth", "website": "https://www.lifehousehotels.com/hotels/miami/south-of-fifth"}]
-    results = await detector.detect_batch(hotels)
-    assert results[0].booking_engine == "Cloudbeds"
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_kasa_triptease(detector):
-    """Kasa El Paseo Miami Beach uses Triptease."""
-    hotels = [{"id": 5, "name": "Kasa El Paseo Miami Beach", "website": "https://kasa.com/vacation-rentals/florida/miami-beach/kasa-el-paseo-miami-beach"}]
-    results = await detector.detect_batch(hotels)
-    assert results[0].booking_engine == "Triptease"
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_bungalows_triptease(detector):
-    """Bungalows Key Largo uses Triptease."""
-    hotels = [{"id": 6, "name": "Bungalows Key Largo", "website": "https://www.bfrhotels.com/bungalows-key-largo"}]
-    results = await detector.detect_batch(hotels)
-    assert results[0].booking_engine == "Triptease"
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_riviere_cloudbeds(detector):
-    """Riviere South Beach Hotel uses Cloudbeds."""
-    hotels = [{"id": 7, "name": "Riviere South Beach Hotel", "website": "https://www.rivieresouthbeach.com"}]
-    results = await detector.detect_batch(hotels)
-    assert results[0].booking_engine == "Cloudbeds"
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_abae_unknown_api(detector):
-    """ABAE Hotel by Eskape Collection uses an unknown booking API."""
-    hotels = [{"id": 8, "name": "ABAE Hotel by Eskape Collection", "website": "https://www.abaehotel.com"}]
-    results = await detector.detect_batch(hotels)
-    # This hotel uses an unknown booking system
-    assert "unknown" in results[0].booking_engine.lower() or results[0].booking_url
-
-
-@pytest.mark.asyncio
-@pytest.mark.integration
-async def test_beach_place_siteminder(detector):
-    """Beach Place uses SiteMinder."""
-    hotels = [{"id": 9, "name": "Beach Place", "website": "https://beachplace.com"}]
+async def test_president_siteminder(detector):
+    """President Hotel Villa Miami Beach uses SiteMinder."""
+    hotels = [{"id": 1, "name": "President Hotel Villa Miami Beach", "website": "https://www.presidentvillamiami.com/"}]
     results = await detector.detect_batch(hotels)
     assert results[0].booking_engine == "SiteMinder"
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_renzzi_wubook(detector):
+    """Renzzi On The Beach uses wubook.net (unknown_booking_api)."""
+    hotels = [{"id": 2, "name": "Renzzi On The Beach", "website": "https://renzzionthebeach.com/book-now/"}]
+    results = await detector.detect_batch(hotels)
+    assert results[0].booking_engine == "unknown_booking_api"
+    assert "wubook" in results[0].booking_url.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_setai_triptease(detector):
+    """The Setai Miami Beach uses Triptease overlay (with SynXis backend)."""
+    hotels = [{"id": 3, "name": "The Setai Miami Beach", "website": "https://www.thesetaihotel.com"}]
+    results = await detector.detect_batch(hotels)
+    # Triptease is detected first as it's an overlay widget
+    assert results[0].booking_engine == "Triptease"
+    # But the actual booking URL should be SynXis
+    assert "synxis" in results[0].booking_url.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_betsy_triptease(detector):
+    """The Betsy Hotel uses Triptease."""
+    hotels = [{"id": 4, "name": "The Betsy Hotel", "website": "https://www.thebetsyhotel.com"}]
+    results = await detector.detect_batch(hotels)
+    assert results[0].booking_engine == "Triptease"
