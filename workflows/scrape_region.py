@@ -44,8 +44,8 @@ def print_estimate(estimate: ScrapeEstimate, region_name: str):
     print(f"Est. hotels:          {estimate.estimated_hotels:,}")
     print()
     print("Pricing: $1 per 1,000 credits ($50 = 50k credits)")
-    print("Rate limit: 50 queries/second")
-    print(f"Est. time:            ~{estimate.estimated_api_calls / 50 / 60:.1f} minutes")
+    print("Rate limit: 46 queries/second")
+    print(f"Est. time:            ~{estimate.estimated_api_calls / 46 / 60:.1f} minutes")
     print("=" * 60)
     print()
 
