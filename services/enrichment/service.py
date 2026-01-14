@@ -10,6 +10,9 @@ from services.enrichment.room_count_enricher import (
     get_groq_api_key,
     log,
 )
+from services.enrichment.customer_proximity import (
+    log as proximity_log,
+)
 
 
 class IService(ABC):
@@ -25,7 +28,11 @@ class IService(ABC):
         pass
 
     @abstractmethod
-    async def calculate_customer_proximity(self, limit: int = 100) -> int:
+    async def calculate_customer_proximity(
+        self,
+        limit: int = 100,
+        max_distance_km: float = 100.0,
+    ) -> int:
         """
         Calculate distance to nearest Sadie customer for hotels.
         Updates hotel_customer_proximity table.
@@ -37,6 +44,13 @@ class IService(ABC):
     async def get_pending_enrichment_count(self) -> int:
         """
         Count hotels waiting for enrichment (status=1).
+        """
+        pass
+
+    @abstractmethod
+    async def get_pending_proximity_count(self) -> int:
+        """
+        Count hotels waiting for proximity calculation.
         """
         pass
 
@@ -108,10 +122,63 @@ class Service(IService):
         log(f"Enrichment complete: {enriched_count}/{len(hotels)} hotels enriched")
         return enriched_count
 
-    async def calculate_customer_proximity(self, limit: int = 100) -> int:
-        # TODO: Integrate customer_match.py
-        return 0
+    async def calculate_customer_proximity(
+        self,
+        limit: int = 100,
+        max_distance_km: float = 100.0,
+    ) -> int:
+        """
+        Calculate distance to nearest Sadie customer for hotels.
+        Uses PostGIS for efficient spatial queries.
+        Returns number of hotels processed.
+        """
+        # Get hotels needing proximity calculation
+        hotels = await repo.get_hotels_pending_proximity(limit=limit)
+
+        if not hotels:
+            proximity_log("No hotels pending proximity calculation")
+            return 0
+
+        proximity_log(f"Processing {len(hotels)} hotels for proximity calculation")
+
+        processed_count = 0
+
+        for hotel in hotels:
+            # Skip if hotel has no location
+            if hotel.latitude is None or hotel.longitude is None:
+                continue
+
+            # Find nearest customer using PostGIS
+            nearest = await repo.find_nearest_customer(
+                hotel_id=hotel.id,
+                max_distance_km=max_distance_km,
+            )
+
+            if nearest:
+                # Insert proximity record
+                await repo.insert_customer_proximity(
+                    hotel_id=hotel.id,
+                    existing_customer_id=nearest["existing_customer_id"],
+                    distance_km=Decimal(str(round(nearest["distance_km"], 1))),
+                )
+                proximity_log(
+                    f"  {hotel.name}: nearest customer is {nearest['customer_name']} "
+                    f"({round(nearest['distance_km'], 1)}km)"
+                )
+                processed_count += 1
+            else:
+                proximity_log(f"  {hotel.name}: no customer within {max_distance_km}km")
+
+        proximity_log(
+            f"Proximity calculation complete: {processed_count}/{len(hotels)} "
+            f"hotels have nearby customers"
+        )
+        return processed_count
 
     async def get_pending_enrichment_count(self) -> int:
         """Count hotels waiting for enrichment (status=1, not yet enriched)."""
         return await repo.get_pending_enrichment_count()
+
+    async def get_pending_proximity_count(self) -> int:
+        """Count hotels waiting for proximity calculation."""
+        return await repo.get_pending_proximity_count()

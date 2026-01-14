@@ -1,10 +1,12 @@
 """Repository for enrichment service database operations."""
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from decimal import Decimal
 from db.client import queries, get_conn
 from db.models.hotel import Hotel
 from db.models.hotel_room_count import HotelRoomCount
+from db.models.existing_customer import ExistingCustomer
+from db.models.hotel_customer_proximity import HotelCustomerProximity
 
 
 async def get_hotels_pending_enrichment(limit: int = 100) -> List[Hotel]:
@@ -96,3 +98,98 @@ async def update_hotel_enrichment_status(hotel_id: int, status: int) -> None:
         await queries.update_hotel_enrichment_status(
             conn, hotel_id=hotel_id, status=status
         )
+
+
+# ============================================================================
+# CUSTOMER PROXIMITY FUNCTIONS
+# ============================================================================
+
+
+async def get_hotels_pending_proximity(limit: int = 100) -> List[Hotel]:
+    """Get hotels that need customer proximity calculation.
+
+    Criteria:
+    - has location
+    - not already in hotel_customer_proximity table
+    """
+    async with get_conn() as conn:
+        results = await queries.get_hotels_pending_proximity(conn, limit=limit)
+        return [Hotel.model_validate(dict(row)) for row in results]
+
+
+async def get_all_existing_customers() -> List[ExistingCustomer]:
+    """Get all existing customers with location for proximity calculation."""
+    async with get_conn() as conn:
+        results = await queries.get_all_existing_customers(conn)
+        return [ExistingCustomer.model_validate(dict(row)) for row in results]
+
+
+async def find_nearest_customer(
+    hotel_id: int,
+    max_distance_km: float = 100.0,
+) -> Optional[Dict[str, Any]]:
+    """Find the nearest existing customer to a hotel within max_distance_km.
+
+    Uses PostGIS ST_DWithin for efficient spatial query.
+
+    Returns dict with existing_customer_id, customer_name, distance_km
+    or None if no customer found within range.
+    """
+    # Convert km to meters for ST_DWithin
+    max_distance_meters = max_distance_km * 1000
+
+    async with get_conn() as conn:
+        result = await queries.find_nearest_customer(
+            conn,
+            hotel_id=hotel_id,
+            max_distance_meters=max_distance_meters,
+        )
+        if result:
+            return dict(result)
+        return None
+
+
+async def insert_customer_proximity(
+    hotel_id: int,
+    existing_customer_id: int,
+    distance_km: Decimal,
+) -> int:
+    """Insert customer proximity for a hotel.
+
+    Returns the hotel_customer_proximity ID.
+    """
+    async with get_conn() as conn:
+        result = await queries.insert_customer_proximity(
+            conn,
+            hotel_id=hotel_id,
+            existing_customer_id=existing_customer_id,
+            distance_km=distance_km,
+        )
+        return result
+
+
+async def get_customer_proximity_by_hotel_id(hotel_id: int) -> Optional[Dict[str, Any]]:
+    """Get customer proximity for a specific hotel.
+
+    Returns dict with proximity info and customer name, or None if not found.
+    """
+    async with get_conn() as conn:
+        result = await queries.get_customer_proximity_by_hotel_id(
+            conn, hotel_id=hotel_id
+        )
+        if result:
+            return dict(result)
+        return None
+
+
+async def delete_customer_proximity(hotel_id: int) -> None:
+    """Delete customer proximity for a hotel (for testing)."""
+    async with get_conn() as conn:
+        await queries.delete_customer_proximity(conn, hotel_id=hotel_id)
+
+
+async def get_pending_proximity_count() -> int:
+    """Count hotels waiting for proximity calculation."""
+    async with get_conn() as conn:
+        result = await queries.get_pending_proximity_count(conn)
+        return result["count"] if result else 0
