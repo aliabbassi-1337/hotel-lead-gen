@@ -242,3 +242,20 @@ async def insert_hotels_bulk(hotels: List[dict]) -> int:
                     continue
 
     return count
+
+
+async def insert_detection_error(
+    hotel_id: int,
+    error_type: str,
+    error_message: Optional[str] = None,
+    detected_location: Optional[str] = None,
+) -> None:
+    """Log a detection error for debugging."""
+    async with get_conn() as conn:
+        await queries.insert_detection_error(
+            conn,
+            hotel_id=hotel_id,
+            error_type=error_type,
+            error_message=error_message,
+            detected_location=detected_location,
+        )

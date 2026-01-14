@@ -282,6 +282,17 @@ class Service(IService):
     async def _save_detection_result(self, result: DetectionResult) -> None:
         """Save detection result to database."""
         try:
+            # Log error to detection_errors table if there was one
+            if result.error:
+                # Parse error type from error string (e.g., "precheck_failed: timeout" -> "precheck_failed")
+                error_type = result.error.split(":")[0].strip()
+                await repo.insert_detection_error(
+                    hotel_id=result.hotel_id,
+                    error_type=error_type,
+                    error_message=result.error,
+                    detected_location=result.detected_location or None,
+                )
+
             # Handle location mismatch (detected in detector, skipped engine detection)
             if result.error == "location_mismatch":
                 await repo.update_hotel_status(
