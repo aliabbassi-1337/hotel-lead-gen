@@ -1,10 +1,12 @@
+import os
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
 
 from services.leadgen import repo
-from services.leadgen.detector import BatchDetector, DetectionConfig, DetectionResult
+from services.leadgen.constants import HotelStatus
+from services.leadgen.detector import BatchDetector, DetectionConfig, DetectionResult, LocationExtractor
 from db.models.hotel import Hotel
 
 
@@ -106,8 +108,14 @@ class IService(ABC):
 
 
 class Service(IService):
-    def __init__(self, detection_config: DetectionConfig = None) -> None:
+    def __init__(
+        self,
+        detection_config: DetectionConfig = None,
+        target_location: Optional[str] = None,
+    ) -> None:
         self.detection_config = detection_config or DetectionConfig()
+        # Target location for filtering - defaults to env var
+        self.target_location = target_location or os.getenv("DETECTION_TARGET_LOCATION", "")
 
     async def scrape_region(
         self,
@@ -163,6 +171,21 @@ class Service(IService):
     async def _save_detection_result(self, result: DetectionResult) -> None:
         """Save detection result to database."""
         try:
+            # Check location filter first
+            if self.target_location and result.detected_location:
+                if not LocationExtractor.location_matches(result.detected_location, self.target_location):
+                    logger.info(
+                        f"Hotel {result.hotel_id}: Location mismatch - "
+                        f"detected '{result.detected_location}', target '{self.target_location}'"
+                    )
+                    await repo.update_hotel_status(
+                        hotel_id=result.hotel_id,
+                        status=HotelStatus.LOCATION_MISMATCH,
+                        phone_website=result.phone_website or None,
+                        email=result.email or None,
+                    )
+                    return
+
             if result.booking_engine and result.booking_engine not in ("", "unknown", "unknown_third_party", "unknown_booking_api"):
                 # Found a booking engine
                 # Get or create booking engine record
@@ -185,18 +208,18 @@ class Service(IService):
                     detection_method=result.detection_method or None,
                 )
 
-                # Update hotel status to 1 (detected)
+                # Update hotel status to detected
                 await repo.update_hotel_status(
                     hotel_id=result.hotel_id,
-                    status=1,
+                    status=HotelStatus.DETECTED,
                     phone_website=result.phone_website or None,
                     email=result.email or None,
                 )
             else:
-                # No booking engine found - status 99
+                # No booking engine found
                 await repo.update_hotel_status(
                     hotel_id=result.hotel_id,
-                    status=99,
+                    status=HotelStatus.NO_BOOKING_ENGINE,
                     phone_website=result.phone_website or None,
                     email=result.email or None,
                 )
@@ -226,14 +249,26 @@ class Service(IService):
         """Save detection results to database.
 
         Returns (detected_count, error_count) tuple.
+        Note: Location mismatches are not counted as errors or detections.
         """
         detected = 0
         errors = 0
 
         for result in results:
             try:
+                # Check for location mismatch before counting
+                is_location_mismatch = (
+                    self.target_location
+                    and result.detected_location
+                    and not LocationExtractor.location_matches(result.detected_location, self.target_location)
+                )
+
                 await self._save_detection_result(result)
-                if result.booking_engine and result.booking_engine not in ("", "unknown", "unknown_third_party", "unknown_booking_api"):
+
+                if is_location_mismatch:
+                    # Don't count as detected or error
+                    pass
+                elif result.booking_engine and result.booking_engine not in ("", "unknown", "unknown_third_party", "unknown_booking_api"):
                     detected += 1
                 elif result.error:
                     errors += 1

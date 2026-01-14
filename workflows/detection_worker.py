@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import asyncio
+import os
 import signal
 from typing import Dict, Any
 from loguru import logger
@@ -132,8 +133,11 @@ async def worker_loop(
         patterns = await service.get_engine_patterns()
         set_engine_patterns(patterns)
 
+        target_location = os.getenv("DETECTION_TARGET_LOCATION", "")
         logger.info(f"Worker starting (concurrency={concurrency}, batch_concurrency={batch_concurrency})")
         logger.info(f"Queue: {queue_url}")
+        if target_location:
+            logger.info(f"Target location filter: {target_location}")
 
         total_processed = 0
         total_detected = 0
