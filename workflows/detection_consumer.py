@@ -19,7 +19,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import asyncio
-import os
 import signal
 from typing import Dict, Any
 from loguru import logger
@@ -66,7 +65,6 @@ async def process_message(
     queue_url: str,
     batch_concurrency: int,
     debug: bool,
-    target_location: str = "",
 ) -> tuple:
     """Process a single SQS message containing hotel IDs.
 
@@ -89,18 +87,17 @@ async def process_message(
             delete_message(queue_url, receipt_handle)
             return (0, 0, 0)
 
-        # Convert to dicts for detector
+        # Convert to dicts for detector (include city for location filtering)
         hotel_dicts = [
-            {"id": h.id, "name": h.name, "website": h.website}
+            {"id": h.id, "name": h.name, "website": h.website, "city": h.city or ""}
             for h in hotels
         ]
 
-        # Run detection with target_location for filtering
+        # Run detection
         config = DetectionConfig(
             concurrency=batch_concurrency,
             headless=True,
             debug=debug,
-            target_location=target_location,
         )
         detector = BatchDetector(config)
         results = await detector.detect_batch(hotel_dicts)
@@ -144,11 +141,8 @@ async def worker_loop(
         patterns = await service.get_engine_patterns()
         set_engine_patterns(patterns)
 
-        target_location = os.getenv("DETECTION_TARGET_LOCATION", "")
-        logger.info(f"Worker starting (concurrency={concurrency}, batch_concurrency={batch_concurrency})")
+        logger.info(f"Consumer starting (concurrency={concurrency}, batch_concurrency={batch_concurrency})")
         logger.info(f"Queue: {queue_url}")
-        if target_location:
-            logger.info(f"Target location filter: {target_location}")
 
         total_processed = 0
         total_detected = 0
@@ -166,7 +160,6 @@ async def worker_loop(
                     queue_url=queue_url,
                     batch_concurrency=batch_concurrency,
                     debug=debug,
-                    target_location=target_location,
                 )
 
         while not shutdown_requested:
@@ -216,7 +209,7 @@ async def worker_loop(
 
         # Final summary
         logger.info("=" * 60)
-        logger.info("WORKER COMPLETE")
+        logger.info("CONSUMER COMPLETE")
         logger.info("=" * 60)
         logger.info(f"Messages processed: {message_count}")
         logger.info(f"Hotels processed:   {total_processed}")

@@ -35,7 +35,6 @@ class DetectionConfig(BaseModel):
     headless: bool = True
     debug: bool = False  # Enable debug logging
     fast_mode: bool = True  # Reduce waits for speed
-    target_location: str = ""  # Filter by location - skip engine detection if mismatch
 
 
 # =============================================================================
@@ -735,8 +734,23 @@ class HotelProcessor:
         if self.config.debug:
             logger.debug(msg)
 
-    async def process(self, hotel_id: int, name: str, website: str, skip_precheck: bool = False) -> DetectionResult:
-        """Process a single hotel and return results."""
+    async def process(
+        self,
+        hotel_id: int,
+        name: str,
+        website: str,
+        expected_city: str = "",
+        skip_precheck: bool = False,
+    ) -> DetectionResult:
+        """Process a single hotel and return results.
+
+        Args:
+            hotel_id: Database ID of the hotel
+            name: Hotel name
+            website: Hotel website URL
+            expected_city: City from DB to compare against detected location
+            skip_precheck: Skip HTTP reachability check (if already done)
+        """
         website = normalize_url(website)
         result = DetectionResult(hotel_id=hotel_id)
 
@@ -760,11 +774,16 @@ class HotelProcessor:
                 return result
 
         async with self.semaphore:
-            result = await self._process_website(website, result)
+            result = await self._process_website(website, result, expected_city)
 
         return result
 
-    async def _process_website(self, website: str, result: DetectionResult) -> DetectionResult:
+    async def _process_website(
+        self,
+        website: str,
+        result: DetectionResult,
+        expected_city: str = "",
+    ) -> DetectionResult:
         """Visit website and extract all data."""
         import time
 
@@ -806,9 +825,9 @@ class HotelProcessor:
             self._log(f"  [TIME] contacts: {time.time()-t0:.1f}s")
 
             # 3. Check location filter - skip engine detection if mismatch
-            if self.config.target_location and result.detected_location:
-                if not LocationExtractor.location_matches(result.detected_location, self.config.target_location):
-                    self._log(f"  [LOCATION] Mismatch: '{result.detected_location}' != '{self.config.target_location}' - skipping engine detection")
+            if expected_city and result.detected_location:
+                if not LocationExtractor.location_matches(result.detected_location, expected_city):
+                    self._log(f"  [LOCATION] Mismatch: detected '{result.detected_location}' != expected '{expected_city}' - skipping engine detection")
                     result.error = "location_mismatch"
                     await page.close()
                     await self.context_queue.put(context)
@@ -1441,7 +1460,7 @@ class BatchDetector:
         """Detect booking engines for a batch of hotels.
 
         Args:
-            hotels: List of dicts with 'id', 'name', 'website' keys
+            hotels: List of dicts with 'id', 'name', 'website', 'city' keys
 
         Returns:
             List of DetectionResult objects
@@ -1510,6 +1529,7 @@ class BatchDetector:
                     hotel_id=h['id'],
                     name=h['name'],
                     website=h.get('website', ''),
+                    expected_city=h.get('city', ''),
                     skip_precheck=True,  # Already done
                 )
                 for h in reachable_hotels

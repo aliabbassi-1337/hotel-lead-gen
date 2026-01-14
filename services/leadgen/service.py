@@ -1,13 +1,11 @@
-import os
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from loguru import logger
 
 from services.leadgen import repo
 from services.leadgen.constants import HotelStatus
 from services.leadgen.detector import BatchDetector, DetectionConfig, DetectionResult
-from services.leadgen.location import LocationExtractor
 from db.models.hotel import Hotel
 
 
@@ -109,22 +107,8 @@ class IService(ABC):
 
 
 class Service(IService):
-    def __init__(
-        self,
-        detection_config: DetectionConfig = None,
-        target_location: Optional[str] = None,
-    ) -> None:
-        # Target location for filtering - defaults to env var
-        self.target_location = target_location or os.getenv("DETECTION_TARGET_LOCATION", "")
-
-        # Create detection config with target_location included
-        if detection_config:
-            # Merge target_location into provided config
-            self.detection_config = DetectionConfig(
-                **{**detection_config.model_dump(), "target_location": self.target_location}
-            )
-        else:
-            self.detection_config = DetectionConfig(target_location=self.target_location)
+    def __init__(self, detection_config: DetectionConfig = None) -> None:
+        self.detection_config = detection_config or DetectionConfig()
 
     async def scrape_region(
         self,
@@ -158,7 +142,7 @@ class Service(IService):
 
         # Convert to dicts for detector
         hotel_dicts = [
-            {"id": h.id, "name": h.name, "website": h.website}
+            {"id": h.id, "name": h.name, "website": h.website, "city": h.city or ""}
             for h in hotels
         ]
 
@@ -180,20 +164,15 @@ class Service(IService):
     async def _save_detection_result(self, result: DetectionResult) -> None:
         """Save detection result to database."""
         try:
-            # Check location filter first
-            if self.target_location and result.detected_location:
-                if not LocationExtractor.location_matches(result.detected_location, self.target_location):
-                    logger.info(
-                        f"Hotel {result.hotel_id}: Location mismatch - "
-                        f"detected '{result.detected_location}', target '{self.target_location}'"
-                    )
-                    await repo.update_hotel_status(
-                        hotel_id=result.hotel_id,
-                        status=HotelStatus.LOCATION_MISMATCH,
-                        phone_website=result.phone_website or None,
-                        email=result.email or None,
-                    )
-                    return
+            # Handle location mismatch (detected in detector, skipped engine detection)
+            if result.error == "location_mismatch":
+                await repo.update_hotel_status(
+                    hotel_id=result.hotel_id,
+                    status=HotelStatus.LOCATION_MISMATCH,
+                    phone_website=result.phone_website or None,
+                    email=result.email or None,
+                )
+                return
 
             if result.booking_engine and result.booking_engine not in ("", "unknown", "unknown_third_party", "unknown_booking_api"):
                 # Found a booking engine
@@ -265,16 +244,9 @@ class Service(IService):
 
         for result in results:
             try:
-                # Check for location mismatch before counting
-                is_location_mismatch = (
-                    self.target_location
-                    and result.detected_location
-                    and not LocationExtractor.location_matches(result.detected_location, self.target_location)
-                )
-
                 await self._save_detection_result(result)
 
-                if is_location_mismatch:
+                if result.error == "location_mismatch":
                     # Don't count as detected or error
                     pass
                 elif result.booking_engine and result.booking_engine not in ("", "unknown", "unknown_third_party", "unknown_booking_api"):
