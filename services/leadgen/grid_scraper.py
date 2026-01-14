@@ -222,6 +222,7 @@ class GridScraper:
         center_lat: float,
         center_lng: float,
         radius_km: float,
+        on_batch_complete: Optional[callable] = None,
     ) -> Tuple[List[ScrapedHotel], ScrapeStats]:
         """Scrape hotels in a circular region using adaptive grid."""
         # Convert center+radius to bounding box
@@ -233,16 +234,21 @@ class GridScraper:
             lat_max=center_lat + lat_deg,
             lng_min=center_lng - lng_deg,
             lng_max=center_lng + lng_deg,
+            on_batch_complete=on_batch_complete,
         )
 
-    async def scrape_state(self, state: str) -> Tuple[List[ScrapedHotel], ScrapeStats]:
+    async def scrape_state(
+        self,
+        state: str,
+        on_batch_complete: Optional[callable] = None,
+    ) -> Tuple[List[ScrapedHotel], ScrapeStats]:
         """Scrape hotels in a state using adaptive grid."""
         state_key = state.lower().replace(" ", "_")
         if state_key not in STATE_BOUNDS:
             raise ValueError(f"Unknown state: {state}. Available: {list(STATE_BOUNDS.keys())}")
 
         lat_min, lat_max, lng_min, lng_max = STATE_BOUNDS[state_key]
-        return await self._scrape_bounds(lat_min, lat_max, lng_min, lng_max)
+        return await self._scrape_bounds(lat_min, lat_max, lng_min, lng_max, on_batch_complete=on_batch_complete)
 
     def estimate_region(
         self,
@@ -298,10 +304,10 @@ class GridScraper:
         estimated_total_cells = initial_cells + subdivided_cells
 
         # Query count depends on cell size:
-        # - Small cells (≤2km, dense mode): 12 queries per cell (no early exit)
+        # - Small cells (≤2km, dense mode): 3 diverse queries per cell
         # - Large cells (>2km): ~4 queries avg (early exit)
         if self.cell_size_km <= 2.0:
-            avg_queries_per_cell = 12.0
+            avg_queries_per_cell = 3.0
         else:
             avg_queries_per_cell = 4.0
         estimated_api_calls = int(estimated_total_cells * avg_queries_per_cell)
@@ -331,8 +337,14 @@ class GridScraper:
         lat_max: float,
         lng_min: float,
         lng_max: float,
+        on_batch_complete: Optional[callable] = None,
     ) -> Tuple[List[ScrapedHotel], ScrapeStats]:
-        """Scrape with adaptive subdivision using concurrent cell processing."""
+        """Scrape with adaptive subdivision using concurrent cell processing.
+
+        Args:
+            on_batch_complete: Optional callback called after each batch with list of hotels found.
+                               Use for incremental saving.
+        """
         self._seen = set()
         self._stats = ScrapeStats()
         self._out_of_credits = False
@@ -358,9 +370,11 @@ class GridScraper:
                 results = await asyncio.gather(*[self._process_cell(cell) for cell in batch])
 
                 # Collect results and handle subdivision
+                batch_hotels = []
                 for cell, (cell_hotels, hit_limit) in zip(batch, results):
                     self._stats.cells_searched += 1
                     hotels.extend(cell_hotels)
+                    batch_hotels.extend(cell_hotels)
 
                     # Adaptive subdivision: if we hit API limit and cell is large enough
                     if hit_limit and cell.size_km > MIN_CELL_SIZE_KM * 2:
@@ -368,6 +382,11 @@ class GridScraper:
                         cells.extend(subcells)
                         self._stats.cells_subdivided += 1
                         logger.debug(f"Subdivided cell at ({cell.center_lat:.3f}, {cell.center_lng:.3f})")
+
+                # Incremental save callback
+                if on_batch_complete and batch_hotels:
+                    await on_batch_complete(batch_hotels)
+                    logger.info(f"Saved {len(batch_hotels)} hotels ({self._stats.cells_searched}/{len(cells) + self._stats.cells_searched} cells)")
 
         self._stats.hotels_found = len(hotels)
         logger.info(f"Scrape done: {len(hotels)} hotels, {self._stats.api_calls} API calls")
@@ -448,11 +467,14 @@ class GridScraper:
                 query = f"{modifier} {search_type}".strip() if modifier else search_type
                 all_queries.append(query)
 
-        # Dense mode (small cells ≤2km): run all queries, no early exit
+        # Dense mode (small cells ≤2km): run 3 diverse queries instead of 12
+        # This reduces duplicates significantly while still getting good coverage
         if self.cell_size_km <= 2.0:
+            # Pick 3 diverse search types (hotel, motel, inn cover most cases)
+            diverse_queries = [all_queries[0], all_queries[3], all_queries[6]]
             results = await asyncio.gather(*[
                 self._search_serper(query, cell.center_lat, cell.center_lng)
-                for query in all_queries
+                for query in diverse_queries
             ])
             for places in results:
                 if len(places) >= API_RESULT_LIMIT:
