@@ -17,9 +17,6 @@ dependencies = [
     "boto3>=1.42.27",
 ]
 
-[tool.uv]
-dev-dependencies = []
-
 [dependency-groups]
 dev = [
     "migra[pg]>=3.0.1663481299",
