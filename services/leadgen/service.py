@@ -6,7 +6,8 @@ from loguru import logger
 
 from services.leadgen import repo
 from services.leadgen.constants import HotelStatus
-from services.leadgen.detector import BatchDetector, DetectionConfig, DetectionResult, LocationExtractor
+from services.leadgen.detector import BatchDetector, DetectionConfig, DetectionResult
+from services.leadgen.location import LocationExtractor
 from db.models.hotel import Hotel
 
 
