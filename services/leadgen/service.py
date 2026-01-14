@@ -84,6 +84,7 @@ class Service(IService):
     ) -> int:
         """
         Scrape hotels in a circular region using adaptive grid.
+        Saves incrementally after each batch so progress isn't lost.
 
         Args:
             center_lat: Center latitude of the region
@@ -99,11 +100,20 @@ class Service(IService):
         # Initialize scraper
         scraper = GridScraper(api_key=self._api_key, cell_size_km=cell_size_km)
 
-        # Run the scrape
-        hotels, stats = await scraper.scrape_region(center_lat, center_lng, radius_km)
+        # Track total saved
+        saved_count = 0
 
-        # Save to database
-        saved_count = await self._save_hotels(hotels, source="grid_region")
+        # Incremental save callback
+        async def save_batch(batch_hotels):
+            nonlocal saved_count
+            count = await self._save_hotels(batch_hotels, source="grid_region")
+            saved_count += count
+
+        # Run the scrape with incremental saving
+        hotels, stats = await scraper.scrape_region(
+            center_lat, center_lng, radius_km,
+            on_batch_complete=save_batch
+        )
 
         logger.info(
             f"Region scrape complete: {stats.hotels_found} found, "
@@ -116,6 +126,7 @@ class Service(IService):
     async def scrape_state(self, state: str, cell_size_km: float = DEFAULT_CELL_SIZE_KM) -> int:
         """
         Scrape hotels in an entire state using adaptive grid.
+        Saves incrementally after each batch so progress isn't lost.
 
         Args:
             state: State name (e.g., "florida", "california")
@@ -128,13 +139,19 @@ class Service(IService):
 
         # Initialize scraper
         scraper = GridScraper(api_key=self._api_key, cell_size_km=cell_size_km)
-
-        # Run the scrape
-        hotels, stats = await scraper.scrape_state(state)
-
-        # Save to database
         source = f"grid_{state.lower().replace(' ', '_')}"
-        saved_count = await self._save_hotels(hotels, source=source)
+
+        # Track total saved
+        saved_count = 0
+
+        # Incremental save callback
+        async def save_batch(batch_hotels):
+            nonlocal saved_count
+            count = await self._save_hotels(batch_hotels, source=source)
+            saved_count += count
+
+        # Run the scrape with incremental saving
+        hotels, stats = await scraper.scrape_state(state, on_batch_complete=save_batch)
 
         logger.info(
             f"State scrape complete ({state}): {stats.hotels_found} found, "
