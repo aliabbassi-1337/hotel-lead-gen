@@ -265,8 +265,7 @@ LEFT JOIN hotel_customer_proximity hcp ON h.id = hcp.hotel_id
 LEFT JOIN existing_customers ec ON hcp.existing_customer_id = ec.id
 WHERE h.city = :city
   AND h.state = :state
-  AND h.status = 1
-ORDER BY h.name;
+  AND h.status = 1;
 
 -- name: get_leads_for_state
 -- Get hotel leads for an entire state with booking engine, room count, and nearest customer
@@ -296,8 +295,7 @@ LEFT JOIN hotel_room_count hrc ON h.id = hrc.hotel_id
 LEFT JOIN hotel_customer_proximity hcp ON h.id = hcp.hotel_id
 LEFT JOIN existing_customers ec ON hcp.existing_customer_id = ec.id
 WHERE h.state = :state
-  AND h.status = 1
-ORDER BY h.city, h.name;
+  AND h.status = 1;
 
 -- name: get_city_stats^
 -- Get stats for a city (for analytics tab)
@@ -347,8 +345,7 @@ JOIN booking_engines be ON hbe.booking_engine_id = be.id
 WHERE h.city = :city
   AND h.state = :state
   AND h.status = 1
-GROUP BY be.name
-ORDER BY hotel_count DESC;
+GROUP BY be.name;
 
 -- name: get_top_engines_for_state
 -- Get top booking engines for a state (launched hotels only)
@@ -360,8 +357,7 @@ JOIN hotel_booking_engines hbe ON h.id = hbe.hotel_id
 JOIN booking_engines be ON hbe.booking_engine_id = be.id
 WHERE h.state = :state
   AND h.status = 1
-GROUP BY be.name
-ORDER BY hotel_count DESC;
+GROUP BY be.name;
 
 -- name: get_cities_in_state
 -- Get all cities in a state that have launched hotels
@@ -369,8 +365,7 @@ SELECT DISTINCT city
 FROM hotels
 WHERE state = :state
   AND city IS NOT NULL
-  AND status = 1
-ORDER BY city;
+  AND status = 1;
 
 -- ============================================================================
 -- LAUNCHER QUERIES
@@ -402,7 +397,6 @@ INNER JOIN hotel_room_count hrc ON h.id = hrc.hotel_id AND hrc.status = 1
 INNER JOIN hotel_customer_proximity hcp ON h.id = hcp.hotel_id
 INNER JOIN existing_customers ec ON hcp.existing_customer_id = ec.id
 WHERE h.status = 0
-ORDER BY h.state, h.city, h.name
 LIMIT :limit;
 
 -- name: get_launchable_count^
@@ -444,7 +438,6 @@ WITH claimed AS (
     INNER JOIN hotel_room_count hrc ON h.id = hrc.hotel_id AND hrc.status = 1
     INNER JOIN hotel_customer_proximity hcp ON h.id = hcp.hotel_id
     WHERE h.status = 0
-    ORDER BY h.id
     LIMIT :limit
     FOR UPDATE OF h SKIP LOCKED
 )
