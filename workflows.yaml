@@ -1,20 +1,62 @@
-# Workflow definitions and schedules for Sadie GTM
+# Workflow definitions for Sadie GTM
+#
+# Pipeline: Scrape (local) → Enqueue → Detect (EC2) → Enrich (EC2) → Launch (EC2) → Export
+#
+# Status values:
+#   -2 = location_mismatch (rejected)
+#   -1 = no_booking_engine (rejected)
+#    0 = pending (in pipeline)
+#    1 = launched (live lead)
 
-workflows:
+# =============================================================================
+# LOCAL WORKFLOWS (run on your machine)
+# =============================================================================
+# Scraping stays local to control Serper API rate limits
+local:
   scraper:
-    description: Scrape hotels from Serper for cities/states
-    command: uv run main.py scraper
-    schedule: "0 6 * * *"  # Daily at 6am
-    enabled: true
+    description: Scrape hotels from Serper for a region
+    command: uv run python workflows/scrape_region.py
+    # Example: uv run python workflows/scrape_region.py "Florida" "USA"
+    # Note: Keep local to control Serper rate limits
 
-  # detect_dispatcher:
-  #   description: Poll for scraped hotels and send to detect queue
-  #   command: uv run main.py detect_dispatcher
-  #   schedule: "*/5 * * * *"  # Every 5 minutes
-  #   enabled: true
+  enqueue_detection:
+    description: Queue scraped hotels to SQS for detection workers
+    command: uv run python workflows/enqueue_detection.py --limit 500
+
+  export:
+    description: Export leads to Excel and upload to S3
+    command: uv run python workflows/export.py --all-states
+    # TODO: Add Slack slash command integration
+
+  status:
+    description: Check pipeline status (pending, processing, launched counts)
+    command: uv run python workflows/launcher.py status
+
+# =============================================================================
+# EC2 WORKFLOWS (auto-start on instance boot via systemd/cron)
+# =============================================================================
+# These run automatically when you start EC2 instances
+# Configure once in AMI, then just start/stop instances as needed
+ec2:
+  detection_consumer:
+    description: Poll SQS and process hotel detection (parallelizable)
+    command: uv run python workflows/detection_consumer.py --concurrency 6
+    type: systemd  # Runs continuously while instance is up
+
+  enrichment_room_counts:
+    description: Enrich hotels with room counts via Groq LLM
+    command: uv run python workflows/enrichment.py room-counts --limit 100
+    schedule: "*/10 * * * *"  # Every 10 min
+    type: cron
+
+  enrichment_proximity:
+    description: Calculate nearest existing customer distance
+    command: uv run python workflows/enrichment.py proximity --limit 200
+    schedule: "*/5 * * * *"  # Every 5 min (fast, no API)
+    type: cron
 
   launcher:
     description: Launch fully enriched hotels (mark as live)
     command: uv run python workflows/launcher.py launch-all
-    schedule: "*/5 * * * *"  # Every 5 minutes
-    enabled: true
+    schedule: "*/5 * * * *"  # Every 5 min
+    type: cron
