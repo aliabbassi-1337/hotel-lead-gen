@@ -412,3 +412,4 @@ class Service(IService):
     async def get_launched_count(self) -> int:
         """Count hotels that have been launched."""
         return await repo.get_launched_count()
+

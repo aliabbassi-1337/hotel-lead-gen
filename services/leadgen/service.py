@@ -430,21 +430,6 @@ class Service(IService):
 
         # No status update needed - detection is tracked by hotel_booking_engines record
         return len(hotel_ids)
-    async def detect_booking_engines(self, limit: int = 100) -> int:
-        """
-        Detect booking engines for hotels with status=0 (scraped).
-
-        TODO: Integrate detect.py script
-
-        Args:
-            limit: Maximum number of hotels to process
-
-        Returns:
-            Number of hotels processed
-        """
-        # TODO: Integrate detect.py script
-        logger.warning("detect_booking_engines not yet implemented")
-        return 0
 
     def estimate_region(
         self,
