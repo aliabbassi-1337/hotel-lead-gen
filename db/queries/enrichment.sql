@@ -1,6 +1,11 @@
+-- ============================================================================
+-- ROOM COUNT ENRICHMENT QUERIES
+-- ============================================================================
+-- Only process hotels that have been detected (exist in hotel_booking_engines)
+
 -- name: get_hotels_pending_enrichment
 -- Get hotels that need room count enrichment (read-only, for status display)
--- Criteria: has website, not already in hotel_room_count
+-- Criteria: detected (in hotel_booking_engines), has website, not in hotel_room_count
 SELECT
     h.id,
     h.name,
@@ -8,6 +13,7 @@ SELECT
     h.created_at,
     h.updated_at
 FROM hotels h
+JOIN hotel_booking_engines hbe ON h.id = hbe.hotel_id
 LEFT JOIN hotel_room_count hrc ON h.id = hrc.hotel_id
 WHERE h.website IS NOT NULL
   AND h.website != ''
@@ -22,6 +28,7 @@ LIMIT :limit;
 WITH pending AS (
     SELECT h.id, h.name, h.website, h.created_at, h.updated_at
     FROM hotels h
+    JOIN hotel_booking_engines hbe ON h.id = hbe.hotel_id
     LEFT JOIN hotel_room_count hrc ON h.id = hrc.hotel_id
     WHERE h.website IS NOT NULL
       AND h.website != ''
@@ -47,17 +54,18 @@ WHERE status = -1
   AND enriched_at < NOW() - INTERVAL '30 minutes';
 
 -- name: get_pending_enrichment_count^
--- Count hotels waiting for enrichment (has website, not yet in hotel_room_count)
+-- Count hotels waiting for enrichment (detected, has website, not in hotel_room_count)
 SELECT COUNT(*) AS count
 FROM hotels h
+JOIN hotel_booking_engines hbe ON h.id = hbe.hotel_id
 LEFT JOIN hotel_room_count hrc ON h.id = hrc.hotel_id
 WHERE h.website IS NOT NULL
   AND h.website != ''
   AND hrc.id IS NULL;
 
 -- name: insert_room_count<!
--- Insert room count for a hotel
--- status: 0=failed, 1=success
+-- Insert/update room count for a hotel
+-- status: -1=processing, 0=failed, 1=success
 INSERT INTO hotel_room_count (hotel_id, room_count, source, confidence, status)
 VALUES (:hotel_id, :room_count, :source, :confidence, :status)
 ON CONFLICT (hotel_id) DO UPDATE SET
@@ -82,29 +90,37 @@ WHERE hotel_id = :hotel_id;
 -- ============================================================================
 -- CUSTOMER PROXIMITY QUERIES
 -- ============================================================================
+-- Only process hotels that have been detected (exist in hotel_booking_engines)
 
 -- name: get_hotels_pending_proximity
--- Get hotels that need customer proximity calculation
--- Criteria: has location, not already in hotel_customer_proximity
--- Only select columns needed for proximity calculation
+-- Get hotels that need customer proximity calculation (read-only, for status display)
+-- Criteria: detected (in hotel_booking_engines), has location, not in hotel_customer_proximity
 SELECT
     h.id,
     h.name,
     ST_Y(h.location::geometry) AS latitude,
     ST_X(h.location::geometry) AS longitude,
-    h.status,
     h.created_at,
     h.updated_at
 FROM hotels h
+JOIN hotel_booking_engines hbe ON h.id = hbe.hotel_id
 LEFT JOIN hotel_customer_proximity hcp ON h.id = hcp.hotel_id
 WHERE h.location IS NOT NULL
   AND hcp.id IS NULL
 ORDER BY h.updated_at DESC
 LIMIT :limit;
 
+-- name: get_pending_proximity_count^
+-- Count hotels waiting for proximity calculation (detected, has location, not in hotel_customer_proximity)
+SELECT COUNT(*) AS count
+FROM hotels h
+JOIN hotel_booking_engines hbe ON h.id = hbe.hotel_id
+LEFT JOIN hotel_customer_proximity hcp ON h.id = hcp.hotel_id
+WHERE h.location IS NOT NULL
+  AND hcp.id IS NULL;
+
 -- name: get_all_existing_customers
 -- Get all existing customers with location for proximity calculation
--- Only select columns needed
 SELECT
     id,
     name,
@@ -160,11 +176,3 @@ WHERE hcp.hotel_id = :hotel_id;
 -- Delete customer proximity for a hotel (for testing)
 DELETE FROM hotel_customer_proximity
 WHERE hotel_id = :hotel_id;
-
--- name: get_pending_proximity_count^
--- Count hotels waiting for proximity calculation (has location)
-SELECT COUNT(*) AS count
-FROM hotels h
-LEFT JOIN hotel_customer_proximity hcp ON h.id = hcp.hotel_id
-WHERE h.location IS NOT NULL
-  AND hcp.id IS NULL;
