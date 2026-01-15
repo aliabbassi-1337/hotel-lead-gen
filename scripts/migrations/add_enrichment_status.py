@@ -35,11 +35,15 @@ async def run(dry_run: bool = False):
 
     try:
         async with get_conn() as conn:
+            # Set search path to include sadie_gtm schema
+            await conn.execute('SET search_path TO sadie_gtm, public')
+
             # Check if status column already exists
             exists = await conn.fetchval("""
                 SELECT EXISTS (
                     SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'hotel_room_count'
+                    WHERE table_schema = 'sadie_gtm'
+                      AND table_name = 'hotel_room_count'
                       AND column_name = 'status'
                 )
             """)
@@ -68,7 +72,8 @@ async def run(dry_run: bool = False):
             # Check if room_count is nullable
             is_nullable = await conn.fetchval("""
                 SELECT is_nullable FROM information_schema.columns
-                WHERE table_name = 'hotel_room_count'
+                WHERE table_schema = 'sadie_gtm'
+                  AND table_name = 'hotel_room_count'
                   AND column_name = 'room_count'
             """)
 
