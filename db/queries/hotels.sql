@@ -363,8 +363,8 @@ WITH claimed AS (
     INNER JOIN hotel_room_count hrc ON h.id = hrc.hotel_id AND hrc.status = 1
     INNER JOIN hotel_customer_proximity hcp ON h.id = hcp.hotel_id
     WHERE h.status = 0
-    LIMIT :limit
     FOR UPDATE OF h SKIP LOCKED
+    LIMIT :limit
 )
 UPDATE hotels
 SET status = 1, updated_at = CURRENT_TIMESTAMP
