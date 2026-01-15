@@ -170,6 +170,14 @@ SET status = :status,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = :hotel_id;
 
+-- name: update_hotel_contact_info!
+-- Update hotel contact info without changing status
+UPDATE hotels
+SET phone_website = COALESCE(:phone_website, phone_website),
+    email = COALESCE(:email, email),
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = :hotel_id;
+
 -- name: get_booking_engine_by_name^
 -- Get booking engine by name
 SELECT id, name, domains, tier, is_active

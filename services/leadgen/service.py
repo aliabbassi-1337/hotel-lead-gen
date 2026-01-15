@@ -101,7 +101,8 @@ class IService(ABC):
     @abstractmethod
     async def reset_stale_processing_hotels(self) -> None:
         """
-        Reset hotels stuck in processing state (status=10) for > 30 min.
+        DEPRECATED: No longer needed with new status system.
+        Detection is tracked by hotel_booking_engines records.
         """
         pass
 
@@ -117,7 +118,8 @@ class IService(ABC):
     async def enqueue_hotels_for_detection(self, limit: int = 1000, batch_size: int = 20) -> int:
         """
         Enqueue hotels for detection via SQS.
-        Queries status=0 hotels, sends to SQS in batches, sets status=10.
+        Queries hotels with status=0 and no hotel_booking_engines record.
+        Detection tracked by hotel_booking_engines presence, not status.
         Returns count of hotels enqueued.
         """
         pass
@@ -317,7 +319,7 @@ class Service(IService):
                         tier=2,
                     )
 
-                # Link hotel to booking engine
+                # Link hotel to booking engine (this marks detection as complete)
                 await repo.insert_hotel_booking_engine(
                     hotel_id=result.hotel_id,
                     booking_engine_id=engine_id,
@@ -325,13 +327,15 @@ class Service(IService):
                     detection_method=result.detection_method or None,
                 )
 
-                # Update hotel status to detected
-                await repo.update_hotel_status(
-                    hotel_id=result.hotel_id,
-                    status=HotelStatus.DETECTED,
-                    phone_website=result.phone_website or None,
-                    email=result.email or None,
-                )
+                # Save phone/email but don't change status - hotel stays at PENDING (0)
+                # Detection completion is tracked by hotel_booking_engines record
+                # Launcher will set status=1 when all enrichments are complete
+                if result.phone_website or result.email:
+                    await repo.update_hotel_contact_info(
+                        hotel_id=result.hotel_id,
+                        phone_website=result.phone_website or None,
+                        email=result.email or None,
+                    )
             else:
                 # No booking engine found
                 await repo.update_hotel_status(
