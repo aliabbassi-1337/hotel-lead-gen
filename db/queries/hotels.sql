@@ -133,55 +133,6 @@ SET phone_website = COALESCE(:phone_website, phone_website),
     updated_at = CURRENT_TIMESTAMP
 WHERE id = :hotel_id;
 
--- name: get_booking_engine_by_name^
--- Get booking engine by name
-SELECT id, name, domains, tier, is_active
-FROM booking_engines
-WHERE name = :name;
-
--- name: get_all_booking_engines
--- Get all active booking engines with their domain patterns
-SELECT id, name, domains, tier
-FROM booking_engines
-WHERE is_active = TRUE
-  AND domains IS NOT NULL
-  AND array_length(domains, 1) > 0;
-
--- name: insert_booking_engine<!
--- Insert a new booking engine (tier 2 = unknown/discovered)
-INSERT INTO booking_engines (name, domains, tier)
-VALUES (:name, :domains, :tier)
-ON CONFLICT (name) DO UPDATE SET
-    domains = COALESCE(EXCLUDED.domains, booking_engines.domains)
-RETURNING id;
-
--- name: insert_hotel_booking_engine!
--- Link hotel to detected booking engine
--- status: -1=failed (non-retriable), 1=success
-INSERT INTO hotel_booking_engines (
-    hotel_id,
-    booking_engine_id,
-    booking_url,
-    detection_method,
-    status,
-    detected_at,
-    updated_at
-) VALUES (
-    :hotel_id,
-    :booking_engine_id,
-    :booking_url,
-    :detection_method,
-    :status,
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP
-)
-ON CONFLICT (hotel_id) DO UPDATE SET
-    booking_engine_id = COALESCE(EXCLUDED.booking_engine_id, hotel_booking_engines.booking_engine_id),
-    booking_url = COALESCE(EXCLUDED.booking_url, hotel_booking_engines.booking_url),
-    detection_method = COALESCE(EXCLUDED.detection_method, hotel_booking_engines.detection_method),
-    status = EXCLUDED.status,
-    updated_at = CURRENT_TIMESTAMP;
-
 -- name: get_hotels_by_ids
 -- Get hotels by list of IDs (for worker to fetch batch)
 SELECT
@@ -211,26 +162,6 @@ WHERE id = ANY(:hotel_ids);
 UPDATE hotels
 SET status = :status, updated_at = CURRENT_TIMESTAMP
 WHERE id = ANY(:hotel_ids);
-
--- name: insert_detection_error!
--- Log a detection error for debugging
-INSERT INTO detection_errors (hotel_id, error_type, error_message, detected_location)
-VALUES (:hotel_id, :error_type, :error_message, :detected_location);
-
--- name: get_detection_errors_by_type
--- Get detection errors by type for analysis
-SELECT id, hotel_id, error_type, error_message, detected_location, created_at
-FROM detection_errors
-WHERE error_type = :error_type
-ORDER BY created_at DESC
-LIMIT :limit;
-
--- name: get_detection_errors_summary
--- Get count of errors by type
-SELECT error_type, COUNT(*) as count
-FROM detection_errors
-GROUP BY error_type
-ORDER BY count DESC;
 
 -- ============================================================================
 -- REPORTING QUERIES
@@ -300,14 +231,11 @@ WHERE h.state = :state
 -- name: get_city_stats^
 -- Get stats for a city (for analytics tab)
 SELECT
-    -- Total counts
     COUNT(*) AS total_scraped,
     COUNT(CASE WHEN h.website IS NOT NULL AND h.website != '' THEN 1 END) AS with_website,
     COUNT(CASE WHEN hbe.hotel_id IS NOT NULL THEN 1 END) AS booking_found,
-    -- Contact info
     COUNT(CASE WHEN h.phone_google IS NOT NULL OR h.phone_website IS NOT NULL THEN 1 END) AS with_phone,
     COUNT(CASE WHEN h.email IS NOT NULL THEN 1 END) AS with_email,
-    -- Tier breakdown (of hotels with booking engine)
     COUNT(CASE WHEN be.tier = 1 THEN 1 END) AS tier_1_count,
     COUNT(CASE WHEN be.tier = 2 THEN 1 END) AS tier_2_count
 FROM hotels h
@@ -319,14 +247,11 @@ WHERE h.city = :city
 -- name: get_state_stats^
 -- Get stats for a state (for analytics tab)
 SELECT
-    -- Total counts
     COUNT(*) AS total_scraped,
     COUNT(CASE WHEN h.website IS NOT NULL AND h.website != '' THEN 1 END) AS with_website,
     COUNT(CASE WHEN hbe.hotel_id IS NOT NULL THEN 1 END) AS booking_found,
-    -- Contact info
     COUNT(CASE WHEN h.phone_google IS NOT NULL OR h.phone_website IS NOT NULL THEN 1 END) AS with_phone,
     COUNT(CASE WHEN h.email IS NOT NULL THEN 1 END) AS with_email,
-    -- Tier breakdown (of hotels with booking engine)
     COUNT(CASE WHEN be.tier = 1 THEN 1 END) AS tier_1_count,
     COUNT(CASE WHEN be.tier = 2 THEN 1 END) AS tier_2_count
 FROM hotels h
