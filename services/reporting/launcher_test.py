@@ -483,6 +483,143 @@ async def test_service_get_launched_count():
 
 
 # ============================================================================
+# STATUS EDGE CASE TESTS
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_excludes_failed_detection():
+    """Test that hotels with failed detection (hbe.status=-1) are excluded."""
+    hotel_id = await insert_hotel(
+        name="Test Failed Detection Hotel",
+        website="https://testfaileddetection.com",
+        city="FailedDetectionCity",
+        state="FailedDetectionState",
+        status=0,
+        source="test",
+    )
+
+    try:
+        # Create booking engine link with status=-1 (failed)
+        booking_engine_id = await insert_booking_engine(
+            name="Failed Detection Engine",
+            domains=["faileddetection.com"],
+            tier=1,
+        )
+        await insert_hotel_booking_engine(
+            hotel_id=hotel_id,
+            booking_engine_id=booking_engine_id,
+            detection_method="test",
+            status=-1,  # failed detection
+        )
+
+        # Even with room count and proximity, should not be launchable
+        await insert_room_count(
+            hotel_id=hotel_id,
+            room_count=50,
+            source="test",
+            confidence=Decimal("1.0"),
+            status=1,
+        )
+
+        hotels = await get_launchable_hotels(limit=1000)
+        test_hotel = next((h for h in hotels if h.id == hotel_id), None)
+        assert test_hotel is None, "Hotel with failed detection should not be launchable"
+
+    except Exception as e:
+        if "existing_customers" in str(e) or "violates foreign key" in str(e):
+            pytest.skip("No existing customers in database for test")
+        raise
+    finally:
+        await delete_room_count(hotel_id)
+        await delete_hotel(hotel_id)
+
+
+@pytest.mark.asyncio
+async def test_excludes_failed_room_count():
+    """Test that hotels with failed room count (hrc.status=0) are excluded."""
+    hotel_id = await insert_hotel(
+        name="Test Failed Room Count Hotel",
+        website="https://testfailedroomcount.com",
+        city="FailedRoomCountCity",
+        state="FailedRoomCountState",
+        status=0,
+        source="test",
+    )
+
+    try:
+        # Create successful booking engine link
+        booking_engine_id = await insert_booking_engine(
+            name="Room Count Test Engine",
+            domains=["roomcounttest.com"],
+            tier=1,
+        )
+        await insert_hotel_booking_engine(
+            hotel_id=hotel_id,
+            booking_engine_id=booking_engine_id,
+            detection_method="test",
+            status=1,  # success
+        )
+
+        # Create room count with status=0 (failed)
+        await insert_room_count(
+            hotel_id=hotel_id,
+            room_count=None,
+            source="test",
+            confidence=None,
+            status=0,  # failed
+        )
+
+        hotels = await get_launchable_hotels(limit=1000)
+        test_hotel = next((h for h in hotels if h.id == hotel_id), None)
+        assert test_hotel is None, "Hotel with failed room count should not be launchable"
+
+    finally:
+        await delete_room_count(hotel_id)
+        await delete_hotel(hotel_id)
+
+
+@pytest.mark.asyncio
+async def test_excludes_rejected_hotels():
+    """Test that rejected hotels (status=-1, -2) are excluded."""
+    hotel_ids = []
+
+    try:
+        # Create hotel with status=-1 (no booking engine)
+        hotel_id_no_engine = await insert_hotel(
+            name="Test No Engine Hotel",
+            website="https://testnoengine.com",
+            city="NoEngineCity",
+            state="NoEngineState",
+            status=-1,  # rejected - no booking engine
+            source="test",
+        )
+        hotel_ids.append(hotel_id_no_engine)
+
+        # Create hotel with status=-2 (location mismatch)
+        hotel_id_mismatch = await insert_hotel(
+            name="Test Location Mismatch Hotel",
+            website="https://testmismatch.com",
+            city="MismatchCity",
+            state="MismatchState",
+            status=-2,  # rejected - location mismatch
+            source="test",
+        )
+        hotel_ids.append(hotel_id_mismatch)
+
+        hotels = await get_launchable_hotels(limit=1000)
+
+        # Neither rejected hotel should be launchable
+        for hotel_id in hotel_ids:
+            test_hotel = next((h for h in hotels if h.id == hotel_id), None)
+            assert test_hotel is None, f"Rejected hotel {hotel_id} should not be launchable"
+
+    finally:
+        for hotel_id in hotel_ids:
+            await delete_hotel(hotel_id)
+
+
+# ============================================================================
 # INTEGRATION TESTS - Full workflow
 # ============================================================================
 
