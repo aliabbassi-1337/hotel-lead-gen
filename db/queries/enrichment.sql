@@ -1,18 +1,21 @@
+-- ============================================================================
+-- ROOM COUNT ENRICHMENT QUERIES
+-- ============================================================================
+-- Only process hotels that have been detected (exist in hotel_booking_engines)
+
 -- name: get_hotels_pending_enrichment
--- Get hotels that need room count enrichment
--- Criteria: status=1 (detected), has website, not already enriched
--- Only select columns needed for enrichment
+-- Get hotels that need room count enrichment (read-only, for status display)
+-- Criteria: detected (in hotel_booking_engines), has website, not in hotel_room_count
 SELECT
     h.id,
     h.name,
     h.website,
-    h.status,
     h.created_at,
     h.updated_at
 FROM hotels h
+JOIN hotel_booking_engines hbe ON h.id = hbe.hotel_id
 LEFT JOIN hotel_room_count hrc ON h.id = hrc.hotel_id
-WHERE h.status = 1
-  AND h.website IS NOT NULL
+WHERE h.website IS NOT NULL
   AND h.website != ''
   AND hrc.id IS NULL
 ORDER BY h.updated_at DESC
@@ -20,62 +23,62 @@ LIMIT :limit;
 
 -- name: claim_hotels_for_enrichment
 -- Atomically claim hotels for enrichment (multi-worker safe)
--- Uses FOR UPDATE SKIP LOCKED so multiple workers grab different rows
--- Sets status=2 (enriching) to mark as claimed
--- Only select columns needed for enrichment
-UPDATE hotels
-SET status = 2, updated_at = CURRENT_TIMESTAMP
-WHERE id IN (
-    SELECT h.id FROM hotels h
-    WHERE h.status = 1
-      AND h.website IS NOT NULL
+-- Inserts status=-1 (processing) records, returns claimed hotel IDs
+-- Uses ON CONFLICT DO NOTHING so only one worker claims each hotel
+WITH pending AS (
+    SELECT h.id, h.name, h.website, h.created_at, h.updated_at
+    FROM hotels h
+    JOIN hotel_booking_engines hbe ON h.id = hbe.hotel_id
+    LEFT JOIN hotel_room_count hrc ON h.id = hrc.hotel_id
+    WHERE h.website IS NOT NULL
       AND h.website != ''
-      AND NOT EXISTS (
-          SELECT 1 FROM hotel_room_count hrc WHERE hrc.hotel_id = h.id
-      )
-    FOR UPDATE SKIP LOCKED
+      AND hrc.id IS NULL
+    ORDER BY h.updated_at DESC
     LIMIT :limit
+),
+claimed AS (
+    INSERT INTO hotel_room_count (hotel_id, status)
+    SELECT id, -1 FROM pending
+    ON CONFLICT (hotel_id) DO NOTHING
+    RETURNING hotel_id
 )
-RETURNING
-    id,
-    name,
-    website,
-    status,
-    created_at,
-    updated_at;
+SELECT p.id, p.name, p.website, p.created_at, p.updated_at
+FROM pending p
+JOIN claimed c ON p.id = c.hotel_id;
 
--- name: reset_stale_enriching_hotels!
--- Reset hotels stuck in enriching state (status=2) for more than N minutes
+-- name: reset_stale_enrichment_claims!
+-- Reset claims stuck in processing state (status=-1) for more than N minutes
 -- Run this periodically to recover from crashed workers
-UPDATE hotels
-SET status = 1, updated_at = CURRENT_TIMESTAMP
-WHERE status = 2
-  AND updated_at < NOW() - INTERVAL '30 minutes';
+DELETE FROM hotel_room_count
+WHERE status = -1
+  AND enriched_at < NOW() - INTERVAL '30 minutes';
 
 -- name: get_pending_enrichment_count^
--- Count hotels waiting for enrichment (status=1, not yet enriched)
+-- Count hotels waiting for enrichment (detected, has website, not in hotel_room_count)
 SELECT COUNT(*) AS count
 FROM hotels h
+JOIN hotel_booking_engines hbe ON h.id = hbe.hotel_id
 LEFT JOIN hotel_room_count hrc ON h.id = hrc.hotel_id
-WHERE h.status = 1
-  AND h.website IS NOT NULL
+WHERE h.website IS NOT NULL
   AND h.website != ''
   AND hrc.id IS NULL;
 
 -- name: insert_room_count<!
--- Insert room count for a hotel
-INSERT INTO hotel_room_count (hotel_id, room_count, source, confidence)
-VALUES (:hotel_id, :room_count, :source, :confidence)
+-- Insert/update room count for a hotel
+-- status: -1=processing, 0=failed, 1=success
+INSERT INTO hotel_room_count (hotel_id, room_count, source, confidence, status)
+VALUES (:hotel_id, :room_count, :source, :confidence, :status)
 ON CONFLICT (hotel_id) DO UPDATE SET
     room_count = EXCLUDED.room_count,
     source = EXCLUDED.source,
     confidence = EXCLUDED.confidence,
+    status = EXCLUDED.status,
     enriched_at = CURRENT_TIMESTAMP
 RETURNING id;
 
 -- name: get_room_count_by_hotel_id^
 -- Get room count for a specific hotel
-SELECT id, hotel_id, room_count, source, confidence, enriched_at
+SELECT id, hotel_id, room_count, source, confidence, status, enriched_at
 FROM hotel_room_count
 WHERE hotel_id = :hotel_id;
 
@@ -84,38 +87,40 @@ WHERE hotel_id = :hotel_id;
 DELETE FROM hotel_room_count
 WHERE hotel_id = :hotel_id;
 
--- name: update_hotel_enrichment_status!
--- Update hotel status after enrichment
-UPDATE hotels
-SET status = :status, updated_at = CURRENT_TIMESTAMP
-WHERE id = :hotel_id;
-
 -- ============================================================================
 -- CUSTOMER PROXIMITY QUERIES
 -- ============================================================================
+-- Only process hotels that have been detected (exist in hotel_booking_engines)
 
 -- name: get_hotels_pending_proximity
--- Get hotels that need customer proximity calculation
--- Criteria: has location, not already in hotel_customer_proximity
--- Only select columns needed for proximity calculation
+-- Get hotels that need customer proximity calculation (read-only, for status display)
+-- Criteria: detected (in hotel_booking_engines), has location, not in hotel_customer_proximity
 SELECT
     h.id,
     h.name,
     ST_Y(h.location::geometry) AS latitude,
     ST_X(h.location::geometry) AS longitude,
-    h.status,
     h.created_at,
     h.updated_at
 FROM hotels h
+JOIN hotel_booking_engines hbe ON h.id = hbe.hotel_id
 LEFT JOIN hotel_customer_proximity hcp ON h.id = hcp.hotel_id
 WHERE h.location IS NOT NULL
   AND hcp.id IS NULL
 ORDER BY h.updated_at DESC
 LIMIT :limit;
 
+-- name: get_pending_proximity_count^
+-- Count hotels waiting for proximity calculation (detected, has location, not in hotel_customer_proximity)
+SELECT COUNT(*) AS count
+FROM hotels h
+JOIN hotel_booking_engines hbe ON h.id = hbe.hotel_id
+LEFT JOIN hotel_customer_proximity hcp ON h.id = hcp.hotel_id
+WHERE h.location IS NOT NULL
+  AND hcp.id IS NULL;
+
 -- name: get_all_existing_customers
 -- Get all existing customers with location for proximity calculation
--- Only select columns needed
 SELECT
     id,
     name,
@@ -171,11 +176,3 @@ WHERE hcp.hotel_id = :hotel_id;
 -- Delete customer proximity for a hotel (for testing)
 DELETE FROM hotel_customer_proximity
 WHERE hotel_id = :hotel_id;
-
--- name: get_pending_proximity_count^
--- Count hotels waiting for proximity calculation (has location)
-SELECT COUNT(*) AS count
-FROM hotels h
-LEFT JOIN hotel_customer_proximity hcp ON h.id = hcp.hotel_id
-WHERE h.location IS NOT NULL
-  AND hcp.id IS NULL;
