@@ -605,6 +605,9 @@ class GridScraper:
         website = place.get("website", "") or ""
         place_id = place.get("placeId")  # Google Place ID - most reliable dedup key
 
+        lat = place.get("latitude")
+        lng = place.get("longitude")
+
         # Primary dedup: Google Place ID (globally unique, stable)
         if place_id:
             if place_id in self._seen_place_ids:
@@ -612,19 +615,25 @@ class GridScraper:
                 logger.debug(f"SKIP duplicate (placeId): {name}")
                 return None
             self._seen_place_ids.add(place_id)
+        elif lat and lng:
+            # Secondary dedup: Location (same coordinates = same place)
+            loc_key = (round(lat, 4), round(lng, 4))  # ~11m precision
+            if loc_key in self._seen_locations:
+                self._stats.duplicates_skipped += 1
+                logger.debug(f"SKIP duplicate (location): {name} at ({lat:.4f}, {lng:.4f})")
+                return None
+            self._seen_locations.add(loc_key)
         else:
-            # Fallback: name-based dedup (less reliable)
+            # Tertiary dedup: name-based (least reliable)
             if name_lower in self._seen:
                 self._stats.duplicates_skipped += 1
                 logger.debug(f"SKIP duplicate (name): {name}")
                 return None
             self._seen.add(name_lower)
 
-        # Track location for cell coverage analysis (round to ~100m grid)
-        lat = place.get("latitude")
-        lng = place.get("longitude")
+        # Track location for cell coverage analysis (even if placeId was used for dedup)
         if lat and lng:
-            loc_key = (round(lat, 3), round(lng, 3))  # ~111m precision
+            loc_key = (round(lat, 3), round(lng, 3))  # ~111m precision for coverage
             self._seen_locations.add(loc_key)
 
             # Filter out-of-bounds results (Paris hotels when scraping Miami)
