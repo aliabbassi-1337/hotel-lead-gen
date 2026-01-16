@@ -5,7 +5,7 @@
 SELECT id, name, state, lat, lng, radius_km, population, display_name, source, created_at
 FROM scrape_target_cities
 WHERE UPPER(state) = UPPER(:state)
-ORDER BY population DESC NULLS LAST, name
+ORDER BY name
 LIMIT :limit;
 
 -- name: get_target_city^

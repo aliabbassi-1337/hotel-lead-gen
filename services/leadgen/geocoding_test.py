@@ -69,10 +69,17 @@ class TestSuggestRadius:
     """Unit tests for _suggest_radius helper."""
 
     def test_major_metro_gets_25km(self):
+        # Top 20 US metros get 25km
         assert _suggest_radius("Miami") == 25.0
-        assert _suggest_radius("Orlando") == 25.0
-        assert _suggest_radius("Tampa") == 25.0
+        assert _suggest_radius("Houston") == 25.0
+        assert _suggest_radius("Dallas") == 25.0
         assert _suggest_radius("Jacksonville") == 25.0
+
+    def test_large_metro_gets_20km(self):
+        # Top 100 metros get 20km
+        assert _suggest_radius("Orlando") == 20.0
+        assert _suggest_radius("Tampa") == 20.0
+        assert _suggest_radius("Las Vegas") == 20.0
 
     def test_major_metro_case_insensitive(self):
         assert _suggest_radius("MIAMI") == 25.0

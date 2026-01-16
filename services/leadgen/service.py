@@ -11,10 +11,10 @@ from services.leadgen.constants import HotelStatus
 from services.leadgen.detector import BatchDetector, DetectionConfig, DetectionResult
 from services.leadgen.geocoding import CityLocation, geocode_city
 from db.models.hotel import Hotel
-from services.leadgen.grid_scraper import GridScraper, ScrapedHotel, ScrapeEstimate, CITY_COORDINATES, DEFAULT_CELL_SIZE_KM
+from services.leadgen.grid_scraper import GridScraper, ScrapedHotel, ScrapeEstimate, DEFAULT_CELL_SIZE_KM
 
 # Re-export for public API
-__all__ = ["IService", "Service", "ScrapeEstimate", "CITY_COORDINATES", "CityLocation"]
+__all__ = ["IService", "Service", "ScrapeEstimate", "CityLocation"]
 
 
 class IService(ABC):
@@ -192,8 +192,17 @@ class Service(IService):
             mode = f"{cell_size_km}km cells"
         logger.info(f"Starting state scrape: {state} ({mode})")
 
+        # Get city coordinates for hybrid mode density detection
+        city_coords = await self._get_city_coords_for_state(state) if (hybrid or aggressive) else None
+
         # Initialize scraper
-        scraper = GridScraper(api_key=self._api_key, cell_size_km=cell_size_km, hybrid=hybrid or aggressive, aggressive=aggressive)
+        scraper = GridScraper(
+            api_key=self._api_key,
+            cell_size_km=cell_size_km,
+            hybrid=hybrid or aggressive,
+            aggressive=aggressive,
+            city_coords=city_coords,
+        )
         source = f"grid_{state.lower().replace(' ', '_')}"
 
         # Track total saved
@@ -215,6 +224,23 @@ class Service(IService):
         )
 
         return saved_count
+
+    async def _get_city_coords_for_state(self, state: str) -> List[Tuple[float, float]]:
+        """Get city coordinates for hybrid mode density detection.
+        
+        Converts state name (e.g., 'florida') to state code (e.g., 'FL')
+        and fetches city coordinates from database.
+        """
+        # Map state names to codes
+        state_codes = {
+            "florida": "FL", "california": "CA", "texas": "TX",
+            "new_york": "NY", "tennessee": "TN", "north_carolina": "NC",
+            "georgia": "GA", "arizona": "AZ", "nevada": "NV", "colorado": "CO",
+        }
+        state_code = state_codes.get(state.lower(), state.upper()[:2])
+        
+        cities = await self.get_target_cities(state_code, limit=100)
+        return [(c.lat, c.lng) for c in cities]
 
     async def _save_hotels(self, hotels: List[ScrapedHotel], source: str) -> int:
         """Convert scraped hotels to dicts and save to database."""

@@ -68,13 +68,53 @@ async def geocode_city(city: str, state: str) -> CityLocation:
 
 
 def _suggest_radius(city_name: str) -> float:
-    """Suggest scrape radius based on city name."""
-    major_metros = {"miami", "orlando", "tampa", "jacksonville", "houston", "dallas", "los angeles", "new york"}
-    medium_cities = {"fort lauderdale", "west palm beach", "sarasota", "fort myers", "tallahassee", "pensacola"}
+    """
+    Suggest scrape radius based on city classification.
     
-    name_lower = city_name.lower()
+    Uses US Census metro area classifications:
+    - Major metros (top 20 US metros): 25km
+    - Large metros (top 100 US metros): 20km  
+    - Medium cities (state capitals, regional centers): 15km
+    - Default (smaller cities): 12km
+    """
+    name_lower = city_name.lower().strip()
+    
+    # Top 20 US metros by population
+    major_metros = {
+        "new york", "los angeles", "chicago", "houston", "phoenix",
+        "philadelphia", "san antonio", "san diego", "dallas", "austin",
+        "san jose", "jacksonville", "fort worth", "columbus", "charlotte",
+        "indianapolis", "san francisco", "seattle", "denver", "washington",
+        "boston", "el paso", "nashville", "detroit", "miami", "atlanta",
+    }
+    
+    # Top 100 metros and regional centers
+    large_metros = {
+        "orlando", "tampa", "baltimore", "portland", "las vegas",
+        "milwaukee", "albuquerque", "tucson", "fresno", "sacramento",
+        "kansas city", "mesa", "atlanta", "omaha", "colorado springs",
+        "raleigh", "long beach", "virginia beach", "oakland", "minneapolis",
+        "tulsa", "arlington", "new orleans", "wichita", "cleveland",
+        "bakersfield", "tampa", "aurora", "anaheim", "honolulu",
+        "santa ana", "riverside", "corpus christi", "lexington", "st louis",
+        "pittsburgh", "anchorage", "stockton", "cincinnati", "st paul",
+    }
+    
+    # State capitals and regional centers (medium-sized)
+    medium_cities = {
+        "fort lauderdale", "west palm beach", "sarasota", "fort myers",
+        "tallahassee", "pensacola", "baton rouge", "little rock",
+        "salt lake city", "hartford", "providence", "richmond",
+        "birmingham", "memphis", "louisville", "buffalo", "rochester",
+        "albany", "charleston", "savannah", "mobile", "montgomery",
+        "jackson", "shreveport", "des moines", "madison", "lansing",
+        "springfield", "topeka", "lincoln", "boise", "santa fe",
+    }
+    
     if name_lower in major_metros:
         return 25.0
+    if name_lower in large_metros:
+        return 20.0
     if name_lower in medium_cities:
         return 15.0
     return 12.0
