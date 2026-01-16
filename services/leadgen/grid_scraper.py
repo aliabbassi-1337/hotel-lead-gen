@@ -162,6 +162,7 @@ class GridCell(BaseModel):
 class ScrapedHotel(BaseModel):
     """Hotel data from scraper."""
     name: str
+    google_place_id: Optional[str] = None  # Google Place ID for deduplication
     website: Optional[str] = None
     phone: Optional[str] = None
     latitude: Optional[float] = None
@@ -214,6 +215,7 @@ class GridScraper:
                 break
 
         self._seen: Set[str] = set()
+        self._seen_place_ids: Set[str] = set()  # Google Place IDs for deduplication
         self._seen_locations: Set[Tuple[float, float]] = set()  # (lat, lng) rounded to ~100m
         self._stats = ScrapeStats()
         self._out_of_credits = False
@@ -349,6 +351,7 @@ class GridScraper:
                                Use for incremental saving.
         """
         self._seen = set()
+        self._seen_place_ids = set()
         self._seen_locations = set()
         self._stats = ScrapeStats()
         self._out_of_credits = False
@@ -600,13 +603,22 @@ class GridScraper:
 
         name_lower = name.lower()
         website = place.get("website", "") or ""
+        place_id = place.get("placeId")  # Google Place ID - most reliable dedup key
 
-        # Skip duplicates
-        if name_lower in self._seen:
-            self._stats.duplicates_skipped += 1
-            logger.debug(f"SKIP duplicate: {name}")
-            return None
-        self._seen.add(name_lower)
+        # Primary dedup: Google Place ID (globally unique, stable)
+        if place_id:
+            if place_id in self._seen_place_ids:
+                self._stats.duplicates_skipped += 1
+                logger.debug(f"SKIP duplicate (placeId): {name}")
+                return None
+            self._seen_place_ids.add(place_id)
+        else:
+            # Fallback: name-based dedup (less reliable)
+            if name_lower in self._seen:
+                self._stats.duplicates_skipped += 1
+                logger.debug(f"SKIP duplicate (name): {name}")
+                return None
+            self._seen.add(name_lower)
 
         # Track location for cell coverage analysis (round to ~100m grid)
         lat = place.get("latitude")
@@ -644,6 +656,7 @@ class GridScraper:
 
         return ScrapedHotel(
             name=name,
+            google_place_id=place_id,
             website=place.get("website"),
             phone=place.get("phoneNumber"),
             latitude=place.get("latitude"),

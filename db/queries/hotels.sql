@@ -3,6 +3,7 @@
 SELECT
     id,
     name,
+    google_place_id,
     website,
     phone_google,
     phone_website,
@@ -26,6 +27,7 @@ WHERE id = :hotel_id;
 -- Insert a new hotel and return the ID
 INSERT INTO hotels (
     name,
+    google_place_id,
     website,
     phone_google,
     phone_website,
@@ -41,6 +43,7 @@ INSERT INTO hotels (
     source
 ) VALUES (
     :name,
+    :google_place_id,
     :website,
     :phone_google,
     :phone_website,
@@ -57,6 +60,7 @@ INSERT INTO hotels (
 )
 ON CONFLICT (name, COALESCE(website, ''))
 DO UPDATE SET
+    google_place_id = COALESCE(EXCLUDED.google_place_id, hotels.google_place_id),
     phone_google = EXCLUDED.phone_google,
     phone_website = EXCLUDED.phone_website,
     email = EXCLUDED.email,
@@ -83,6 +87,7 @@ WHERE id = :hotel_id;
 SELECT
     h.id,
     h.name,
+    h.google_place_id,
     h.website,
     h.phone_google,
     h.phone_website,
@@ -138,6 +143,7 @@ WHERE id = :hotel_id;
 SELECT
     id,
     name,
+    google_place_id,
     website,
     phone_google,
     phone_website,

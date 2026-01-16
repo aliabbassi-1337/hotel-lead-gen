@@ -209,6 +209,7 @@ class Service(IService):
         for h in hotels:
             hotel_dicts.append({
                 "name": h.name,
+                "google_place_id": h.google_place_id,
                 "website": h.website,
                 "phone_google": h.phone,
                 "phone_website": None,

@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS hotels (
 
     -- Core identifiers
     name TEXT NOT NULL,
+    google_place_id TEXT,  -- Google Place ID for deduplication
     website TEXT,
 
     -- Contact info
