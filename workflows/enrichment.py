@@ -184,9 +184,9 @@ Examples:
         help="Max concurrent requests in paid tier mode (default: 15)"
     )
     room_parser.add_argument(
-        "--notify",
+        "--no-notify",
         action="store_true",
-        help="Send Slack notification after enrichment"
+        help="Disable Slack notification"
     )
 
     # Proximity command
@@ -207,9 +207,9 @@ Examples:
         help="Max distance in km to search for customers (default: 100)"
     )
     prox_parser.add_argument(
-        "--notify",
+        "--no-notify",
         action="store_true",
-        help="Send Slack notification after calculation"
+        help="Disable Slack notification"
     )
 
     # Status command
@@ -224,11 +224,11 @@ Examples:
             limit=args.limit,
             free_tier=args.free_tier,
             concurrency=args.concurrency,
-            notify=args.notify,
+            notify=not args.no_notify,
         ))
     elif args.command == "proximity":
         logger.info(f"Running proximity calculation (limit={args.limit}, max_distance={args.max_distance}km)")
-        asyncio.run(run_proximity(limit=args.limit, max_distance_km=args.max_distance, notify=args.notify))
+        asyncio.run(run_proximity(limit=args.limit, max_distance_km=args.max_distance, notify=not args.no_notify))
     elif args.command == "status":
         asyncio.run(show_status())
     else:

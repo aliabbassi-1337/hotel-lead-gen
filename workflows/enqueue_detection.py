@@ -77,15 +77,15 @@ Environment:
         help="Hotels per SQS message (default: 20)"
     )
     parser.add_argument(
-        "--notify",
+        "--no-notify",
         action="store_true",
-        help="Send Slack notification after enqueue"
+        help="Disable Slack notification"
     )
 
     args = parser.parse_args()
 
     logger.info(f"Enqueuing up to {args.limit} hotels (batch_size={args.batch_size})")
-    asyncio.run(run(limit=args.limit, batch_size=args.batch_size, notify=args.notify))
+    asyncio.run(run(limit=args.limit, batch_size=args.batch_size, notify=not args.no_notify))
 
 
 if __name__ == "__main__":
