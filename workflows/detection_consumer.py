@@ -122,7 +122,7 @@ async def worker_loop(
     batch_concurrency: int = 5,
     debug: bool = False,
     max_messages: int = 0,
-    notify: bool = False,
+    notify: bool = True,
 ):
     """Main worker loop - poll SQS and process messages.
 
@@ -297,9 +297,9 @@ Environment:
         help="Enable debug logging"
     )
     parser.add_argument(
-        "--notify",
+        "--no-notify",
         action="store_true",
-        help="Send Slack notification on completion"
+        help="Disable Slack notification"
     )
 
     args = parser.parse_args()
@@ -331,7 +331,7 @@ Environment:
         batch_concurrency=batch_concurrency,
         debug=args.debug,
         max_messages=args.max_messages,
-        notify=args.notify,
+        notify=not args.no_notify,
     ))
 
 

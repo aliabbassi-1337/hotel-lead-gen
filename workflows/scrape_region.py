@@ -92,7 +92,7 @@ async def scrape_region_workflow(
     radius_km: float,
     cell_size_km: float,
     region_name: str = "Region",
-    notify: bool = False,
+    notify: bool = True,
 ) -> int:
     """Scrape hotels in a circular region."""
     await init_db()
@@ -119,7 +119,7 @@ async def scrape_region_workflow(
         await close_db()
 
 
-async def scrape_state_workflow(state: str, cell_size_km: float, notify: bool = False) -> int:
+async def scrape_state_workflow(state: str, cell_size_km: float, notify: bool = True) -> int:
     """Scrape hotels in a state."""
     await init_db()
 
@@ -170,7 +170,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable debug logging (shows filtered hotels)")
 
     # Slack notification
-    parser.add_argument("--notify", action="store_true", help="Send Slack notification after scrape")
+    parser.add_argument("--no-notify", action="store_true", help="Disable Slack notification")
 
     args = parser.parse_args()
 
@@ -193,14 +193,14 @@ def main():
             print_estimate(estimate, f"City: {args.city.replace('_', ' ').title()} r={args.radius_km}km cell={cell_size}km")
         else:
             region_name = args.city.replace('_', ' ').title()
-            asyncio.run(scrape_region_workflow(lat, lng, args.radius_km, cell_size, region_name, args.notify))
+            asyncio.run(scrape_region_workflow(lat, lng, args.radius_km, cell_size, region_name, not args.no_notify))
 
     elif args.state:
         if args.estimate:
             estimate = service.estimate_state(args.state, cell_size)
             print_estimate(estimate, f"State: {args.state.title()} cell={cell_size}km")
         else:
-            asyncio.run(scrape_state_workflow(args.state, cell_size, args.notify))
+            asyncio.run(scrape_state_workflow(args.state, cell_size, not args.no_notify))
 
     elif args.center_lat and args.center_lng:
         if args.estimate:
@@ -208,7 +208,7 @@ def main():
             print_estimate(estimate, f"Region: ({args.center_lat}, {args.center_lng}) r={args.radius_km}km cell={cell_size}km")
         else:
             region_name = f"({args.center_lat}, {args.center_lng})"
-            asyncio.run(scrape_region_workflow(args.center_lat, args.center_lng, args.radius_km, cell_size, region_name, args.notify))
+            asyncio.run(scrape_region_workflow(args.center_lat, args.center_lng, args.radius_km, cell_size, region_name, not args.no_notify))
 
     else:
         parser.error("Provide --city, --state, or --center-lat and --center-lng")

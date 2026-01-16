@@ -87,7 +87,7 @@ async def preview_launchable(limit: int) -> None:
         await close_db()
 
 
-async def launch_batch(limit: int, notify: bool = False) -> None:
+async def launch_batch(limit: int, notify: bool = True) -> None:
     """Launch a batch of hotels (multi-worker safe)."""
     await init_db()
     try:
@@ -180,9 +180,9 @@ Notes:
         help="Max hotels to launch per batch (default: 100)"
     )
     launch_parser.add_argument(
-        "--notify",
+        "--no-notify",
         action="store_true",
-        help="Send Slack notification after launch"
+        help="Disable Slack notification"
     )
 
     # Keep launch-all as alias for backwards compatibility
@@ -198,7 +198,7 @@ Notes:
     elif args.command == "preview":
         asyncio.run(preview_launchable(limit=args.limit))
     elif args.command == "launch":
-        asyncio.run(launch_batch(limit=args.limit, notify=args.notify))
+        asyncio.run(launch_batch(limit=args.limit, notify=not args.no_notify))
     elif args.command == "launch-all":
         asyncio.run(launch_batch(limit=10000, notify=True))
     else:

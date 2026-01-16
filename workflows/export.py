@@ -5,19 +5,24 @@ Generates Excel reports for hotel leads and uploads to S3.
 
 Usage:
     # Export a single city
-    uv run python workflows/export.py --city "Miami Beach" --state FL
+    uv run python workflows/export.py city --city "Miami Beach" --state FL
 
     # Export all cities in a state plus state aggregate
-    uv run python workflows/export.py --state FL
+    uv run python workflows/export.py state --state FL
 
     # Export a city without uploading to S3 (local file only)
-    uv run python workflows/export.py --city Miami --state FL --local
+    uv run python workflows/export.py city --city Miami --state FL --local
 
     # Export and send Slack notification
-    uv run python workflows/export.py --city Miami --state FL --notify
+    uv run python workflows/export.py city --city Miami --state FL --notify
 """
 
 import sys
+from pathlib import Path
+
+# Add project root to path for direct script execution
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import asyncio
 import argparse
 
@@ -32,7 +37,7 @@ async def export_city_workflow(
     state: str,
     country: str = "USA",
     local_only: bool = False,
-    notify: bool = False,
+    notify: bool = True,
 ) -> str:
     """Export a single city report."""
     await init_db()
@@ -88,7 +93,7 @@ async def export_state_workflow(
     state: str,
     country: str = "USA",
     local_only: bool = False,
-    notify: bool = False,
+    notify: bool = True,
 ) -> list:
     """Export all cities in a state plus state aggregate."""
     await init_db()
@@ -154,8 +159,8 @@ def main():
     # Local only (no S3 upload)
     parser.add_argument("--local", action="store_true", help="Save locally instead of uploading to S3")
 
-    # Slack notification
-    parser.add_argument("--notify", action="store_true", help="Send Slack notification after export")
+    # Slack notification (on by default)
+    parser.add_argument("--no-notify", action="store_true", help="Disable Slack notification")
 
     args = parser.parse_args()
 
@@ -170,7 +175,7 @@ def main():
             args.state,
             args.country,
             args.local,
-            args.notify,
+            not args.no_notify,
         ))
         print(f"\nExported: {result}")
 
@@ -180,7 +185,7 @@ def main():
             args.state,
             args.country,
             args.local,
-            args.notify,
+            not args.no_notify,
         ))
         print(f"\nExported {len(results)} reports:")
         for r in results:
