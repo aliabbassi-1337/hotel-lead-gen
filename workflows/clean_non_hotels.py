@@ -18,7 +18,7 @@ NON_HOTEL_KEYWORDS = [
     # Restaurants (generic)
     "restaurant", "grill", "sushi", "pizza", "taco", "burrito", "bbq", "barbecue",
     "steakhouse", "seafood", "buffet", "diner", "bakery", "deli", "cafe",
-    "bistro", "eatery", "cantina", "tavern", "pub", "brewery", "bar & grill",
+    "bistro", "eatery", "cantina", "brewery", "bar & grill",
     "ramen", "noodle", "pho", "wings", "wingstop", "hot pot",
     "korean bbq", "hibachi", "teriyaki", "shawarma", "falafel", "kebab",
     # Restaurant chains
@@ -30,8 +30,8 @@ NON_HOTEL_KEYWORDS = [
     "pf chang", "benihana", "shake shack", "in-n-out", "whataburger",
     "jack in the box", "hardee", "carl's jr", "krispy kreme", "baskin",
     "cold stone", "dairy queen", "culver", "popeyes", "five guys", "arby",
-    # Medical
-    "pharmacy", "hospital", "clinic", "medical center", "dental", "urgent care",
+    # Medical - use "hospital " with space to avoid matching "hospitality"
+    "pharmacy", "hospital ", "clinic", "medical center", "dental", "urgent care",
     "doctor", "physician", "healthcare", "laboratory",
     # Retail
     "publix", "walmart", "target", "cvs", "walgreens", "kroger", "whole foods",
@@ -40,8 +40,8 @@ NON_HOTEL_KEYWORDS = [
     # Banks
     "bank of america", "chase bank", "wells fargo", "citibank",
     "credit union", "western union", "moneygram",
-    # Gas stations
-    "gas station", "chevron", "exxon", "shell", "speedway",
+    # Gas stations - use "shell gas" to avoid matching "Hotel Shelley"
+    "gas station", "chevron", "exxon", "shell gas", "speedway",
     "wawa", "sheetz", "racetrac", "quiktrip", "circle k", "7-eleven",
     # Auto
     "autozone", "o'reilly auto", "jiffy lube", "valvoline", "car wash",
@@ -64,9 +64,9 @@ NON_HOTEL_KEYWORDS = [
     # Car rental
     "sixt", "hertz", "avis", "enterprise rent", "budget car", "national car",
     "rent a car", "car rental",
-    # Apartments/Senior Living (not short-term)
-    "apartment", "the palace", "senior living", "assisted living", "nursing home",
-    "retirement", "memory care", "eldercare",
+    # Senior Living - removed "apartment" (apartment hotels are legit)
+    "senior living", "assisted living", "nursing home",
+    "retirement community", "memory care", "eldercare",
     # Construction/Services
     "exteriors", "roofing", "plumbing", "electric", "hvac", "landscaping",
     "construction", "contractor", "remodeling", "renovation",

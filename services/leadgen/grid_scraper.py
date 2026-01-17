@@ -90,8 +90,8 @@ SKIP_CHAINS = [
 
 # Non-hotel businesses to skip by name keywords
 SKIP_NON_HOTELS = [
-    # Healthcare
-    "pharmacy", "hospital", "clinic", "medical", "urgent care", "emergency",
+    # Healthcare - use "hospital " with space to avoid matching "hospitality"
+    "pharmacy", "hospital ", "clinic", "medical", "urgent care", "emergency",
     "dental", "dentist", "doctor", "physician", "health center", "healthcare",
     "veterinary", "vet clinic", "animal hospital", "laboratory",
     # Retail
@@ -102,7 +102,7 @@ SKIP_NON_HOTELS = [
     # Restaurants (generic food terms)
     "restaurant", "grill", "sushi", "pizza", "taco", "burrito", "bbq", "barbecue",
     "steakhouse", "seafood", "buffet", "diner", "bakery", "deli", "cafe",
-    "bistro", "eatery", "cantina", "tavern", "pub", "brewery", "bar & grill",
+    "bistro", "eatery", "cantina", "brewery", "bar & grill",
     "ramen", "noodle", "pho", "wings", "wingstop", "wing stop", "hot pot",
     "korean bbq", "hibachi", "teriyaki", "shawarma", "falafel", "kebab",
     # Restaurants (chains)
@@ -118,8 +118,8 @@ SKIP_NON_HOTELS = [
     # Banks/Finance
     "bank of america", "chase bank", "wells fargo", "citibank", "td bank",
     "credit union", "atm", "western union", "moneygram", "payday loan",
-    # Gas stations
-    "gas station", "shell", "chevron", "exxon", "bp ", "speedway", "wawa",
+    # Gas stations - use "shell gas" to avoid matching "Hotel Shelley"
+    "gas station", "shell gas", "chevron", "exxon", "bp ", "speedway", "wawa",
     "sheetz", "racetrac", "quiktrip", "circle k", "7-eleven", "7 eleven",
     # Religious/Education
     "church", "temple", "mosque", "synagogue", "chapel",
@@ -144,9 +144,9 @@ SKIP_NON_HOTELS = [
     # Car rental
     "sixt", "hertz", "avis", "enterprise rent", "budget car", "national car",
     "rent a car", "car rental",
-    # Apartments/Senior Living
-    "apartment", "the palace", "senior living", "assisted living", "nursing home",
-    "retirement", "memory care", "eldercare",
+    # Senior Living - removed "apartment" (apartment hotels are legit)
+    "senior living", "assisted living", "nursing home",
+    "retirement community", "memory care", "eldercare",
     # Construction/Services
     "exteriors", "roofing", "plumbing", "electric", "hvac", "landscaping",
     "construction", "contractor", "remodeling", "renovation",

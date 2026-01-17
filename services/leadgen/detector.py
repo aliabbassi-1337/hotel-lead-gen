@@ -131,8 +131,8 @@ SKIP_NON_HOTEL_DOMAINS = [
 
 # Non-hotel name keywords to skip
 SKIP_NON_HOTEL_NAMES = [
-    # Medical
-    "pharmacy", "hospital", "clinic", "medical center", "dental", "urgent care",
+    # Medical - use specific terms to avoid matching "hospitality"
+    "pharmacy", "hospital ", "clinic", "medical center", "dental", "urgent care",
     "doctor", "physician", "healthcare", "health center", "laboratory",
     # Retail
     "publix", "walmart", "target", "cvs", "walgreens", "kroger", "whole foods",
@@ -141,7 +141,7 @@ SKIP_NON_HOTEL_NAMES = [
     # Restaurants (generic food terms)
     "restaurant", "grill", "sushi", "pizza", "taco", "burrito", "bbq", "barbecue",
     "steakhouse", "seafood", "buffet", "diner", "bakery", "deli", "cafe",
-    "bistro", "eatery", "cantina", "tavern", "pub", "brewery", "bar & grill",
+    "bistro", "eatery", "cantina", "brewery", "bar & grill",
     "ramen", "noodle", "pho", "wings", "wingstop", "hot pot",
     "korean bbq", "hibachi", "teriyaki", "shawarma", "falafel", "kebab",
     # Restaurants (chains)
@@ -166,7 +166,7 @@ SKIP_NON_HOTEL_NAMES = [
     # Shipping
     "ups store", "fedex office", "post office", "usps",
     # Gas / Auto
-    "gas station", "chevron", "exxon", "shell", "bp", "mobil", "speedway",
+    "gas station", "chevron", "exxon", "shell gas", "bp gas", "mobil", "speedway",
     "wawa", "sheetz", "racetrac", "quiktrip", "circle k", "7-eleven",
     "autozone", "o'reilly auto", "advance auto", "jiffy lube", "valvoline",
     # Religious / Educational
@@ -184,8 +184,8 @@ SKIP_NON_HOTEL_NAMES = [
     "pet", "grooming", "doggy", "veterinar", "animal clinic",
     # Childcare
     "daycare", "childcare", "preschool", "kindergarten", "learning center",
-    # Real estate (not accommodation)
-    "apartment", "condo", "real estate", "realty", "property management",
+    # Real estate (not accommodation) - removed "apartment" (apartment hotels are legit)
+    "condo for sale", "real estate", "realty", "property management",
     # Entertainment (not accommodation)
     "museum", "gallery", "library", "zoo", "aquarium", "stadium",
     "theater", "theatre", "cinema", "concert hall", "arena", "bowling", "arcade",
@@ -196,9 +196,9 @@ SKIP_NON_HOTEL_NAMES = [
     # Car rental
     "enterprise rent", "hertz", "avis", "budget car", "national car",
     "sixt", "rent a car", "car rental",
-    # Apartments/Senior Living
-    "apartment", "the palace", "senior living", "assisted living", "nursing home",
-    "retirement", "memory care", "eldercare",
+    # Senior Living (not short-term accommodation)
+    "senior living", "assisted living", "nursing home",
+    "retirement community", "memory care", "eldercare",
     # Construction/Services
     "exteriors", "roofing", "plumbing", "electric", "hvac", "landscaping",
     "construction", "contractor", "remodeling", "renovation",
