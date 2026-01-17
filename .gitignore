@@ -42,3 +42,5 @@ sync_to_onedrive.sh
 arch.png
 SADIE-GTM-BLUEPRINT.png
 *.png
+# Generated EC2 configs
+infra/ec2/generated/

@@ -89,14 +89,19 @@ sudo tee /etc/logrotate.d/sadie > /dev/null <<EOF
 }
 EOF
 
-# Install systemd service
-echo "[8/8] Installing systemd service and cron..."
-sudo cp infra/ec2/detection-consumer.service /etc/systemd/system/
+# Generate and install systemd service + cron
+echo "[8/8] Generating and installing systemd service and cron..."
+uv run python scripts/deploy_ec2.py generate
+
+# Install systemd services
+for f in infra/ec2/generated/*.service; do
+    sudo cp "$f" /etc/systemd/system/
+done
 sudo systemctl daemon-reload
 sudo systemctl enable detection-consumer.service
 
 # Install cron jobs
-sudo cp infra/ec2/sadie-cron /etc/cron.d/sadie-gtm
+sudo cp infra/ec2/generated/sadie-cron /etc/cron.d/sadie-gtm
 sudo chmod 644 /etc/cron.d/sadie-gtm
 
 echo ""
