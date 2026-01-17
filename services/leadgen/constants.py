@@ -16,6 +16,7 @@ class HotelStatus:
     """
 
     # Rejected statuses (negative)
+    NON_HOTEL = -4           # Not a hotel (restaurant, store, etc.)
     DUPLICATE = -3           # Duplicate hotel (same placeId, location, or name)
     LOCATION_MISMATCH = -2   # Website location doesn't match target region
     NO_BOOKING_ENGINE = -1   # No booking engine found (dead end)
@@ -26,6 +27,7 @@ class HotelStatus:
 
 
 HOTEL_STATUS_LABELS = {
+    HotelStatus.NON_HOTEL: "non_hotel",
     HotelStatus.DUPLICATE: "duplicate",
     HotelStatus.LOCATION_MISMATCH: "location_mismatch",
     HotelStatus.NO_BOOKING_ENGINE: "no_booking_engine",
