@@ -42,6 +42,16 @@ from db.client import init_db, close_db, get_conn
 STATUS_DUPLICATE = -3
 
 
+async def reset_duplicates() -> int:
+    """Reset all duplicate-marked hotels back to pending (status=0)."""
+    async with get_conn() as conn:
+        result = await conn.execute(
+            "UPDATE hotels SET status = 0, updated_at = NOW() WHERE status = $1",
+            STATUS_DUPLICATE
+        )
+        return int(result.split()[-1])
+
+
 async def get_duplicate_stats() -> Dict:
     """Get statistics about potential duplicates."""
     async with get_conn() as conn:
@@ -158,34 +168,44 @@ async def find_duplicates_by_location(
 ) -> List[Tuple[int, float, float, str]]:
     """Find duplicate hotels by location (for hotels without google_place_id).
     
+    Only considers hotels as duplicates if they're at the same location AND
+    have similar names (to avoid marking different units in same building as dupes).
+    
     Returns list of (hotel_id, lat, lng, name) for duplicates to mark.
     Keeps the hotel with highest rating (or earliest created_at if tied).
     """
     state_filter = "AND state = $2" if state else ""
     params = [STATUS_DUPLICATE, state] if state else [STATUS_DUPLICATE]
     
+    # Use 3 decimal precision (~111m) and require similar names
+    # This avoids marking "Condo 1516" and "Condo 1207" as duplicates
     query = f"""
-        WITH ranked AS (
+        WITH location_groups AS (
             SELECT 
                 id,
                 name,
                 rating,
                 created_at,
-                ROUND(ST_Y(location::geometry)::numeric, 4) as lat,
-                ROUND(ST_X(location::geometry)::numeric, 4) as lng,
-                ROW_NUMBER() OVER (
-                    PARTITION BY 
-                        ROUND(ST_Y(location::geometry)::numeric, 4),
-                        ROUND(ST_X(location::geometry)::numeric, 4)
-                    ORDER BY 
-                        COALESCE(rating, 0) DESC,
-                        created_at ASC
-                ) as rn
+                ROUND(ST_Y(location::geometry)::numeric, 3) as lat,
+                ROUND(ST_X(location::geometry)::numeric, 3) as lng,
+                -- Extract base name (first 20 chars, lowercased, alphanumeric only)
+                LOWER(REGEXP_REPLACE(LEFT(name, 20), '[^a-zA-Z0-9]', '', 'g')) as name_key
             FROM hotels
             WHERE location IS NOT NULL
               AND google_place_id IS NULL
               AND status != $1
               {state_filter}
+        ),
+        ranked AS (
+            SELECT 
+                id, name, lat, lng, rating, created_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY lat, lng, name_key
+                    ORDER BY 
+                        COALESCE(rating, 0) DESC,
+                        created_at ASC
+                ) as rn
+            FROM location_groups
         )
         SELECT id, lat, lng, name
         FROM ranked
@@ -360,6 +380,7 @@ Examples:
     parser.add_argument("--state", help="Only deduplicate hotels in this state")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be deduplicated without making changes")
     parser.add_argument("--stats", action="store_true", help="Just show duplicate statistics")
+    parser.add_argument("--reset", action="store_true", help="Reset all duplicates back to pending (status=0)")
     
     args = parser.parse_args()
     
@@ -370,6 +391,11 @@ Examples:
     await init_db()
     
     try:
+        if args.reset:
+            count = await reset_duplicates()
+            logger.info(f"Reset {count} hotels from duplicate (status=-3) back to pending (status=0)")
+            return
+        
         if args.stats:
             stats = await get_duplicate_stats()
             logger.info("=" * 60)
