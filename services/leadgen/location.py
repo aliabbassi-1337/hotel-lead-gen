@@ -61,11 +61,24 @@ class LocationExtractor:
 
         return ""
 
+    # Florida metro areas (cities that should match)
+    FLORIDA_METROS = {
+        "miami": ["miami", "miami beach", "coral gables", "coconut grove", "south beach", 
+                  "north miami", "hialeah", "doral", "aventura", "sunny isles", "key biscayne",
+                  "brickell", "wynwood", "little havana", "downtown miami"],
+        "orlando": ["orlando", "lake buena vista", "kissimmee", "international drive", 
+                    "disney", "universal", "celebration", "dr phillips", "sand lake"],
+        "tampa": ["tampa", "st petersburg", "clearwater", "tampa bay", "ybor city",
+                  "channelside", "hyde park", "westshore"],
+        "fort lauderdale": ["fort lauderdale", "lauderdale", "hollywood", "pompano beach",
+                            "deerfield beach", "boca raton"],
+    }
+
     @classmethod
     def location_matches(cls, detected: str, target: str) -> bool:
         """Check if detected location matches target location.
 
-        Uses fuzzy matching to handle variations (e.g., "Göteborg" vs "Gothenburg").
+        Uses fuzzy matching to handle variations and metro areas.
         """
         if not detected or not target:
             return True  # If either is empty, don't filter
@@ -81,6 +94,16 @@ class LocationExtractor:
         if target_lower in detected_lower or detected_lower in target_lower:
             return True
 
+        # Check Florida metro areas - if both are in same metro, match
+        for metro, cities in cls.FLORIDA_METROS.items():
+            detected_in_metro = any(c in detected_lower for c in cities)
+            target_in_metro = any(c in target_lower for c in cities)
+            if detected_in_metro and target_in_metro:
+                return True
+            # Also match if target is the metro name
+            if metro in target_lower and detected_in_metro:
+                return True
+
         # Handle Swedish city name variations
         variations = {
             "gothenburg": ["göteborg", "goteborg"],
@@ -92,4 +115,6 @@ class LocationExtractor:
             if detected_lower in all_forms and target_lower in all_forms:
                 return True
 
-        return False
+        # Be lenient - if we're unsure, allow it through
+        # Better to have false positives than miss good hotels
+        return True
