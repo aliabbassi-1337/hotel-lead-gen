@@ -87,10 +87,6 @@ CREATE INDEX IF NOT EXISTS idx_hotels_status ON hotels(status);
 CREATE INDEX IF NOT EXISTS idx_hotels_google_place_id ON hotels(google_place_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_hotels_name_website_unique ON hotels(name, COALESCE(website, ''));
 CREATE UNIQUE INDEX IF NOT EXISTS idx_hotels_google_place_id_unique ON hotels(google_place_id) WHERE google_place_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_hotels_location_unique ON hotels(
-    ROUND(ST_Y(location::geometry)::numeric, 4),
-    ROUND(ST_X(location::geometry)::numeric, 4)
-) WHERE google_place_id IS NULL AND location IS NOT NULL;
 
 -- ============================================================================
 -- BOOKING_ENGINES: Reference table for known engines (must be created before hotel_booking_engines)
@@ -268,3 +264,47 @@ CREATE TABLE IF NOT EXISTS detection_errors (
 CREATE INDEX IF NOT EXISTS idx_detection_errors_hotel_id ON detection_errors(hotel_id);
 CREATE INDEX IF NOT EXISTS idx_detection_errors_error_type ON detection_errors(error_type);
 CREATE INDEX IF NOT EXISTS idx_detection_errors_created_at ON detection_errors(created_at);
+
+-- ============================================================================
+-- SCRAPE_TARGET_CITIES: Cities to scrape for hotels
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS scrape_target_cities (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    state TEXT NOT NULL,
+    lat DOUBLE PRECISION NOT NULL,
+    lng DOUBLE PRECISION NOT NULL,
+    radius_km DOUBLE PRECISION DEFAULT 12.0,  -- Suggested scrape radius (from Nominatim importance)
+    display_name TEXT,
+    source TEXT DEFAULT 'nominatim',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    UNIQUE(name, state)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scrape_target_cities_state ON scrape_target_cities(state);
+
+-- ============================================================================
+-- SCRAPE_REGIONS: Polygon regions for targeted scraping
+-- ============================================================================
+-- Instead of scraping entire states with uniform grids, define specific
+-- polygon regions around cities/tourist areas. Each region can have its
+-- own cell size, optimizing cost by using smaller cells in dense areas.
+CREATE TABLE IF NOT EXISTS scrape_regions (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,                    -- e.g., "Miami Metro", "Orlando Theme Parks"
+    state TEXT NOT NULL,                   -- State code (e.g., "FL")
+    region_type TEXT DEFAULT 'city',       -- city, corridor, custom, boundary
+    polygon GEOGRAPHY,                     -- GeoJSON Polygon or MultiPolygon as PostGIS geography
+    center_lat DOUBLE PRECISION,           -- Center point for reference
+    center_lng DOUBLE PRECISION,
+    radius_km DOUBLE PRECISION,            -- If generated from city buffer
+    cell_size_km DOUBLE PRECISION DEFAULT 2.0,  -- Recommended cell size for this region
+    priority INTEGER DEFAULT 0,            -- Higher = scrape first
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    UNIQUE(name, state)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scrape_regions_state ON scrape_regions(state);
+CREATE INDEX IF NOT EXISTS idx_scrape_regions_polygon ON scrape_regions USING GIST(polygon);
