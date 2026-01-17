@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS hotels (
 
     -- Core identifiers
     name TEXT NOT NULL,
+    google_place_id TEXT,  -- Google Place ID for deduplication
     website TEXT,
 
     -- Contact info
@@ -83,7 +84,9 @@ CREATE INDEX IF NOT EXISTS idx_hotels_location ON hotels USING GIST(location);
 CREATE INDEX IF NOT EXISTS idx_hotels_city_state ON hotels(city, state);
 CREATE INDEX IF NOT EXISTS idx_hotels_website ON hotels(website);
 CREATE INDEX IF NOT EXISTS idx_hotels_status ON hotels(status);
+CREATE INDEX IF NOT EXISTS idx_hotels_google_place_id ON hotels(google_place_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_hotels_name_website_unique ON hotels(name, COALESCE(website, ''));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hotels_google_place_id_unique ON hotels(google_place_id) WHERE google_place_id IS NOT NULL;
 
 -- ============================================================================
 -- BOOKING_ENGINES: Reference table for known engines (must be created before hotel_booking_engines)

@@ -8,6 +8,7 @@ class Hotel(BaseModel):
 
     id: int
     name: str
+    google_place_id: Optional[str] = None  # Google Place ID for deduplication
     website: Optional[str] = None
 
     # Contact
