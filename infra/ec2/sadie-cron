@@ -11,10 +11,10 @@ MAILTO=""
 # Format: minute hour day month weekday user command
 
 # Enrichment: Room counts via Groq LLM (every 10 minutes)
-*/10 * * * * ubuntu cd /home/ubuntu/sadie_gtm && source .env && /home/ubuntu/.local/bin/uv run python workflows/enrichment.py room_counts --limit 50 --no-notify >> /var/log/sadie/enrichment-room-count.log 2>&1
+*/10 * * * * ubuntu cd /home/ubuntu/sadie_gtm && source .env && /home/ubuntu/.local/bin/uv run python workflows/enrichment.py room-counts --limit 100 >> /var/log/sadie/enrichment-room-count.log 2>&1
 
 # Enrichment: Customer proximity via PostGIS (every 5 minutes)
-*/5 * * * * ubuntu cd /home/ubuntu/sadie_gtm && source .env && /home/ubuntu/.local/bin/uv run python workflows/enrichment.py proximity --limit 100 --no-notify >> /var/log/sadie/enrichment-proximity.log 2>&1
+*/5 * * * * ubuntu cd /home/ubuntu/sadie_gtm && source .env && /home/ubuntu/.local/bin/uv run python workflows/enrichment.py proximity --limit 200 >> /var/log/sadie/enrichment-proximity.log 2>&1
 
 # Launcher: Mark fully enriched hotels as live (every 5 minutes)
-*/5 * * * * ubuntu cd /home/ubuntu/sadie_gtm && source .env && /home/ubuntu/.local/bin/uv run python workflows/launcher.py launch --limit 100 --no-notify >> /var/log/sadie/launcher.log 2>&1
+*/5 * * * * ubuntu cd /home/ubuntu/sadie_gtm && source .env && /home/ubuntu/.local/bin/uv run python workflows/launcher.py launch-all >> /var/log/sadie/launcher.log 2>&1
