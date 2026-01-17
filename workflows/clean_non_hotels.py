@@ -68,8 +68,8 @@ async def mark_non_hotels(dry_run: bool = True, batch_size: int = 1000) -> int:
     """Mark non-hotel businesses with status=-4."""
     pool = await init_db()
     
-    # Build LIKE conditions for each keyword
-    like_conditions = " OR ".join([f"LOWER(name) LIKE '%{kw}%'" for kw in NON_HOTEL_KEYWORDS])
+    # Build LIKE conditions for each keyword (escape apostrophes for SQL)
+    like_conditions = " OR ".join([f"LOWER(name) LIKE '%{kw.replace(chr(39), chr(39)+chr(39))}%'" for kw in NON_HOTEL_KEYWORDS])
     
     async with pool.acquire() as conn:
         if dry_run:
