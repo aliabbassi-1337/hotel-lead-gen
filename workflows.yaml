@@ -1,8 +1,9 @@
 # Workflow definitions for Sadie GTM
 #
-# Pipeline: Scrape (local) → Enqueue → Detect (EC2) → Enrich (EC2) → Launch (EC2) → Export
+# Pipeline: Ingest → Scrape (local) → Enqueue → Detect (EC2) → Enrich (EC2) → Launch (EC2) → Export
 #
 # Status values:
+#   -3 = duplicate (same placeId/location/name)
 #   -2 = location_mismatch (rejected)
 #   -1 = no_booking_engine (rejected)
 #    0 = pending (in pipeline)
@@ -11,23 +12,38 @@
 # =============================================================================
 # LOCAL WORKFLOWS (run on your machine)
 # =============================================================================
-# Scraping stays local to control Serper API rate limits
 local:
-  scraper:
-    description: Scrape hotels from Serper for a region
-    command: uv run python workflows/scrape_region.py
-    # Example: uv run python workflows/scrape_region.py "Florida" "USA"
-    # Note: Keep local to control Serper rate limits
+  # Step 1: Ingest region polygons (one-time per state)
+  ingest_regions:
+    description: Fetch city polygons from OSM and save to database
+    command: uv run python -m workflows.ingest_regions --state FL
+    # Run once per state to set up scraping regions
 
+  # Step 2: Scrape hotels in polygon regions
+  scrape_polygon:
+    description: Scrape hotels from Serper for polygon regions
+    command: uv run python -m workflows.scrape_polygon --state FL
+    # Scrapes all ingested regions for a state
+    # Use --only "Miami" "Orlando" to scrape specific cities
+    # Use --estimate to preview cost before scraping
+
+  # Step 3: Deduplicate scraped hotels
+  deduplicate:
+    description: Mark duplicate hotels (placeId → location → name)
+    command: uv run python -m workflows.deduplicate
+    # Use --dry-run to preview, --stats for stats only
+
+  # Step 4: Queue hotels for detection
   enqueue_detection:
     description: Queue scraped hotels to SQS for detection workers
     command: uv run python workflows/enqueue_detection.py --limit 500
 
+  # Step 5: Export final leads
   export:
     description: Export leads to Excel and upload to S3
     command: uv run python workflows/export.py --all-states
-    # TODO: Add Slack slash command integration
 
+  # Utility: Check pipeline status
   status:
     description: Check pipeline status (pending, processing, launched counts)
     command: uv run python workflows/launcher.py status
