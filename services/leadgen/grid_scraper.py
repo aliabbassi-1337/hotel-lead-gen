@@ -88,6 +88,33 @@ SKIP_CHAINS = [
     "four seasons", "ritz-carlton", "st. regis", "fairmont",
 ]
 
+# Non-hotel businesses to skip by name keywords
+SKIP_NON_HOTELS = [
+    # Healthcare
+    "pharmacy", "hospital", "clinic", "medical", "urgent care", "emergency",
+    "dental", "dentist", "doctor", "physician", "health center", "healthcare",
+    "veterinary", "vet clinic", "animal hospital",
+    # Retail
+    "publix", "walmart", "target", "costco", "kroger", "cvs", "walgreens",
+    "home depot", "lowe's", "menards", "staples", "office depot",
+    "dollar general", "dollar tree", "family dollar",
+    # Food/Restaurant
+    "mcdonald", "burger king", "wendy's", "taco bell", "chick-fil-a",
+    "starbucks", "dunkin", "subway", "pizza hut", "domino's", "papa john",
+    "chipotle", "panera", "olive garden", "applebee", "chili's",
+    # Banks/Finance
+    "bank of america", "chase bank", "wells fargo", "citibank", "td bank",
+    "credit union", "atm",
+    # Other non-hotels
+    "gas station", "shell", "chevron", "exxon", "bp ", "speedway",
+    "church", "school", "university", "college", "library",
+    "police", "fire station", "post office", "ups store", "fedex",
+    "car wash", "auto repair", "tire", "jiffy lube", "autozone",
+    "storage", "self storage", "u-haul",
+    "gym", "fitness", "planet fitness", "la fitness", "ymca",
+    "salon", "barber", "nail", "spa ",  # note: "spa " with space to avoid matching "space"
+]
+
 # Website domains to skip (big chains, aggregators, social media, junk)
 SKIP_DOMAINS = [
     # Big chains
@@ -104,6 +131,16 @@ SKIP_DOMAINS = [
     "tiktok.com", "linkedin.com", "yelp.com",
     # Other junk
     "google.com",
+    # Non-hotels (retail, pharmacy, healthcare, restaurants, etc.)
+    "publix.com", "cvs.com", "walgreens.com", "walmart.com", "target.com",
+    "costco.com", "kroger.com", "albertsons.com", "safeway.com",
+    "mcdonalds.com", "starbucks.com", "dunkindonuts.com", "subway.com",
+    "chipotle.com", "tacobell.com", "wendys.com", "burgerking.com",
+    "chick-fil-a.com", "dominos.com", "pizzahut.com", "papajohns.com",
+    "bankofamerica.com", "chase.com", "wellsfargo.com", "citibank.com",
+    "ups.com", "fedex.com", "usps.com",
+    "homedepot.com", "lowes.com", "menards.com",
+    "staples.com", "officedepot.com",
     # Government/education (not hotels)
     ".gov", ".edu", ".mil",
     "dnr.", "parks.", "recreation.",
@@ -691,6 +728,16 @@ class GridScraper:
         if not name:
             return None
 
+        # Filter by place type - only keep lodging types
+        place_type = (place.get("type") or "").lower()
+        valid_lodging_types = ["hotel", "motel", "inn", "resort", "lodge", "hostel", "guest house", "bed & breakfast", "b&b", "suites", "extended stay"]
+        is_lodging = any(t in place_type for t in valid_lodging_types)
+        
+        if place_type and not is_lodging:
+            self._stats.chains_skipped += 1
+            logger.debug(f"SKIP non-lodging type '{place_type}': {name}")
+            return None
+
         name_lower = name.lower()
         website = place.get("website", "") or ""
 
@@ -721,6 +768,13 @@ class GridScraper:
             if chain in name_lower:
                 self._stats.chains_skipped += 1
                 logger.debug(f"SKIP chain '{chain}': {name}")
+                return None
+
+        # Skip non-hotel businesses by name
+        for keyword in SKIP_NON_HOTELS:
+            if keyword in name_lower:
+                self._stats.chains_skipped += 1
+                logger.debug(f"SKIP non-hotel '{keyword}': {name}")
                 return None
 
         # Skip chains/aggregators by website domain
