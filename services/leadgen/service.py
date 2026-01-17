@@ -773,18 +773,34 @@ class Service(IService):
         self,
         state: str,
         save_to_db: bool = True,
+        region_names: Optional[List[str]] = None,
     ) -> List[ScrapedHotel]:
         """
-        Scrape all regions for a state.
-        Each region is scraped with its own cell size.
+        Scrape regions for a state.
+        
+        Args:
+            state: State code (e.g., "FL")
+            save_to_db: Whether to save hotels to database
+            region_names: If provided, only scrape these specific regions
+            
         Returns combined list of all hotels.
         """
         regions = await self.get_regions(state)
         if not regions:
-            logger.warning(f"No regions defined for {state}. Use generate_regions_from_cities first.")
+            logger.warning(f"No regions defined for {state}. Use ingest_regions workflow first.")
             return []
         
+        # Filter to specific regions if requested
+        if region_names:
+            name_set = {n.lower() for n in region_names}
+            regions = [r for r in regions if r.name.lower() in name_set]
+            if not regions:
+                logger.warning(f"None of the specified regions found: {region_names}")
+                return []
+        
         all_hotels = []
+        total_saved = 0
+        seen_ids = set()  # Track across all regions for deduplication
         
         for region in regions:
             bounds = region.bounds
@@ -798,36 +814,42 @@ class Service(IService):
             )
             
             scraper = GridScraper(
-                api_key=self.api_key,
-                min_cell_size_km=region.cell_size_km,
+                api_key=self._api_key,
+                cell_size_km=region.cell_size_km,
             )
             
-            hotels = await scraper.scrape_bounds(
+            # Incremental save callback
+            async def save_batch(batch_hotels):
+                nonlocal total_saved
+                # Deduplicate before saving
+                unique_batch = []
+                for h in batch_hotels:
+                    if h.google_place_id:
+                        if h.google_place_id in seen_ids:
+                            continue
+                        seen_ids.add(h.google_place_id)
+                    unique_batch.append(h)
+                
+                if save_to_db and unique_batch:
+                    count = await self._save_hotels(unique_batch, source=f"grid_{state.lower()}_{region.name.lower().replace(' ', '_')}")
+                    total_saved += count
+                    logger.info(f"  Saved batch: {count} hotels (total: {total_saved})")
+                
+                all_hotels.extend(unique_batch)
+            
+            hotels, stats = await scraper._scrape_bounds(
                 lat_min=bounds["lat_min"],
                 lat_max=bounds["lat_max"],
                 lng_min=bounds["lng_min"],
                 lng_max=bounds["lng_max"],
+                on_batch_complete=save_batch,
             )
             
             logger.info(f"  Found {len(hotels)} hotels in {region.name}")
-            all_hotels.extend(hotels)
         
-        # Deduplicate across regions
-        seen_ids = set()
-        unique_hotels = []
-        for hotel in all_hotels:
-            if hotel.google_place_id:
-                if hotel.google_place_id in seen_ids:
-                    continue
-                seen_ids.add(hotel.google_place_id)
-            unique_hotels.append(hotel)
+        logger.info(f"Total unique hotels across all regions: {len(all_hotels)} ({total_saved} saved)")
         
-        logger.info(f"Total unique hotels across all regions: {len(unique_hotels)}")
-        
-        if save_to_db:
-            await self._save_hotels(unique_hotels)
-        
-        return unique_hotels
+        return all_hotels
 
     async def estimate_regions(self, state: str) -> dict:
         """

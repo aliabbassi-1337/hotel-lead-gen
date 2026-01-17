@@ -178,6 +178,7 @@ class ScrapedHotel(BaseModel):
     state: Optional[str] = None
     rating: Optional[float] = None
     review_count: Optional[int] = None
+    google_place_id: Optional[str] = None
 
 
 class ScrapeStats(BaseModel):
@@ -745,6 +746,7 @@ class GridScraper:
             state=state,
             rating=place.get("rating"),
             review_count=place.get("reviews"),
+            google_place_id=place.get("placeId") or place.get("cid"),
         )
 
     def _parse_address(self, address: str) -> Tuple[Optional[str], Optional[str]]:

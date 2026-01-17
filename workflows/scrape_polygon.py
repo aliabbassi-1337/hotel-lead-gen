@@ -36,6 +36,7 @@ import asyncio
 import json
 import os
 import sys
+from typing import List, Optional
 
 from loguru import logger
 
@@ -99,17 +100,19 @@ async def estimate_regions(service: Service, state: str) -> None:
         logger.info(f"  • {r['name']}: {r['cells']:,} cells ({r['cell_size_km']}km)")
 
 
-async def scrape_regions(service: Service, state: str) -> None:
-    """Scrape all regions for a state."""
-    region_count = await service.count_regions(state)
+async def scrape_regions(service: Service, state: str, region_names: Optional[List[str]] = None) -> None:
+    """Scrape regions for a state."""
+    if region_names:
+        logger.info(f"Scraping {len(region_names)} specific regions: {', '.join(region_names)}")
+    else:
+        region_count = await service.count_regions(state)
+        if region_count == 0:
+            logger.warning(f"No regions configured for {state}.")
+            logger.info(f"Ingest regions first: uv run python -m workflows.ingest_regions --state {state}")
+            return
+        logger.info(f"Scraping all {region_count} regions for {state}...")
     
-    if region_count == 0:
-        logger.warning(f"No regions configured for {state}.")
-        logger.info("Ingest regions first: uv run python -m workflows.ingest_regions --state {state}")
-        return
-    
-    logger.info(f"Scraping {region_count} regions for {state}...")
-    hotels = await service.scrape_regions(state, save_to_db=True)
+    hotels = await service.scrape_regions(state, save_to_db=True, region_names=region_names)
     
     logger.info("=" * 60)
     logger.info("Scraping Complete")
@@ -271,6 +274,7 @@ Examples:
     parser.add_argument("--list", action="store_true", help="List configured regions")
     parser.add_argument("--estimate", action="store_true", help="Estimate cost for all regions")
     parser.add_argument("--clear", action="store_true", help="Clear all regions")
+    parser.add_argument("--only", nargs="+", metavar="REGION", help="Only scrape these specific regions")
     
     # Region management
     parser.add_argument("--add", metavar="NAME", help="Add a custom region")
@@ -325,8 +329,8 @@ Examples:
         elif args.remove:
             await remove_region(service, state, args.remove)
         else:
-            # Default action: scrape
-            await scrape_regions(service, state)
+            # Default action: scrape (optionally filtered)
+            await scrape_regions(service, state, region_names=args.only)
     finally:
         await close_db()
 
