@@ -80,6 +80,99 @@ SKIP_JUNK_DOMAINS = [
     "dnr.", "parks.", "recreation.", ".gov", ".edu", ".mil",
 ]
 
+# Non-hotel website domains to skip (retail, food, banks, services, etc.)
+SKIP_NON_HOTEL_DOMAINS = [
+    # Grocery / Retail
+    "publix.com", "walmart.com", "target.com", "costco.com", "kroger.com",
+    "wholefoodsmarket.com", "amazon.com", "safeway.com", "albertsons.com",
+    # Pharmacy
+    "cvs.com", "walgreens.com", "riteaid.com",
+    # Fast food / Restaurants
+    "mcdonalds.com", "starbucks.com", "subway.com", "dominos.com",
+    "pizzahut.com", "burgerking.com", "chipotle.com", "tacobell.com",
+    "wendys.com", "dunkindonuts.com", "chick-fil-a.com", "papajohns.com",
+    # Banks
+    "bankofamerica.com", "chase.com", "wellsfargo.com", "citibank.com",
+    "usbank.com", "capitalone.com", "pnc.com", "tdbank.com",
+    # Home improvement / Electronics
+    "homedepot.com", "lowes.com", "bestbuy.com", "apple.com", "microsoft.com",
+    # Telecom
+    "att.com", "verizon.com", "t-mobile.com", "xfinity.com", "spectrum.com",
+    # Shipping
+    "ups.com", "fedex.com", "usps.com", "dhl.com",
+    # Gas stations
+    "exxon.com", "shell.com", "bp.com", "chevron.com", "mobil.com",
+    # Medical
+    "cvs.com", "walgreens.com", "riteaid.com", "labcorp.com", "questdiagnostics.com",
+    # Storage
+    "publicstorage.com", "extraspace.com", "cubesmart.com", "lifestorage.com",
+    # Car rental (not hotels)
+    "enterprise.com", "hertz.com", "avis.com", "budget.com", "nationalcar.com",
+    # Fitness
+    "planetfitness.com", "lafitness.com", "24hourfitness.com", "orangetheory.com",
+]
+
+# Non-hotel name keywords to skip
+SKIP_NON_HOTEL_NAMES = [
+    # Medical
+    "pharmacy", "hospital", "clinic", "medical center", "dental", "urgent care",
+    "doctor", "physician", "healthcare", "health center", "laboratory",
+    # Retail
+    "publix", "walmart", "target", "cvs", "walgreens", "kroger", "whole foods",
+    "costco", "safeway", "albertsons", "rite aid", "dollar general", "dollar tree",
+    # Food
+    "mcdonald's", "starbucks", "subway", "domino's", "pizza hut", "burger king",
+    "chipotle", "taco bell", "kfc", "wendy's", "dunkin", "chick-fil-a",
+    "papa john's", "sonic drive", "arby's", "popeyes", "five guys",
+    # Banks
+    "bank of america", "chase bank", "wells fargo", "citibank", "us bank",
+    "credit union", "atm", "pnc bank", "td bank", "capital one",
+    # Home / Electronics
+    "home depot", "lowe's", "best buy", "apple store", "microsoft store",
+    "ace hardware", "menards", "harbor freight",
+    # Telecom
+    "at&t", "verizon", "t-mobile", "xfinity", "spectrum", "cricket wireless",
+    # Shipping
+    "ups store", "fedex office", "post office", "usps",
+    # Gas / Auto
+    "gas station", "chevron", "exxon", "shell", "bp", "mobil", "speedway",
+    "autozone", "o'reilly auto", "advance auto", "jiffy lube", "valvoline",
+    # Religious / Educational
+    "church", "school", "university", "college", "academy", "seminary",
+    # Fitness / Recreation
+    "gym", "fitness", "planet fitness", "la fitness", "24 hour fitness",
+    "ymca", "ywca", "crossfit",
+    # Storage / Services
+    "storage", "self storage", "public storage", "u-haul",
+    "laundromat", "dry cleaner", "car wash",
+    # Real estate (not accommodation)
+    "apartment", "condo", "real estate", "realty", "property management",
+    # Entertainment (not accommodation)
+    "museum", "gallery", "library", "zoo", "aquarium", "stadium",
+    "theater", "cinema", "concert hall", "arena", "bowling", "arcade",
+    # Government
+    "government", "city hall", "courthouse", "police department", "fire station",
+    "dmv", "social security", "irs",
+    # Car rental
+    "enterprise rent", "hertz", "avis", "budget car", "national car",
+]
+
+
+def is_non_hotel_name(name: str) -> bool:
+    """Check if name indicates a non-hotel business."""
+    if not name:
+        return False
+    name_lower = name.lower()
+    return any(keyword in name_lower for keyword in SKIP_NON_HOTEL_NAMES)
+
+
+def is_non_hotel_domain(url: str) -> bool:
+    """Check if URL is a non-hotel business domain."""
+    if not url:
+        return False
+    url_lower = url.lower()
+    return any(domain in url_lower for domain in SKIP_NON_HOTEL_DOMAINS)
+
 
 def is_junk_domain(url: str) -> bool:
     """Check if URL is a junk domain that should be skipped."""
@@ -765,6 +858,18 @@ class HotelProcessor:
         logger.info(f"Processing hotel {hotel_id}: {name} | {website}")
 
         if not website:
+            return result
+
+        # Skip non-hotels by name (early filter before browser)
+        if is_non_hotel_name(name):
+            self._log(f"  [FILTER] ✗ Skipping non-hotel name: {name}")
+            result.error = "non_hotel_name"
+            return result
+
+        # Skip non-hotels by website domain
+        if is_non_hotel_domain(website):
+            self._log(f"  [FILTER] ✗ Skipping non-hotel domain: {website}")
+            result.error = "non_hotel_domain"
             return result
 
         # Skip junk domains (unless already checked)
@@ -1478,9 +1583,35 @@ class BatchDetector:
 
         results: List[DetectionResult] = []
 
+        # OPTIMIZATION: Filter non-hotels before expensive operations
+        filtered_hotels = []
+        for h in hotels:
+            hotel_id = h['id']
+            name = h.get('name', '')
+            website = h.get('website', '')
+
+            # Skip non-hotels by name
+            if is_non_hotel_name(name):
+                logger.debug(f"Filtering non-hotel by name: {name}")
+                results.append(DetectionResult(hotel_id=hotel_id, error="non_hotel_name"))
+                continue
+
+            # Skip non-hotels by domain
+            if is_non_hotel_domain(website):
+                logger.debug(f"Filtering non-hotel by domain: {website}")
+                results.append(DetectionResult(hotel_id=hotel_id, error="non_hotel_domain"))
+                continue
+
+            filtered_hotels.append(h)
+
+        if filtered_hotels:
+            non_hotel_count = len(hotels) - len(filtered_hotels)
+            if non_hotel_count > 0:
+                logger.info(f"Filtered {non_hotel_count} non-hotels before processing")
+
         # OPTIMIZATION: Batch precheck all URLs first (parallel HTTP checks)
         urls_to_check = []
-        for h in hotels:
+        for h in filtered_hotels:
             website = h.get('website', '')
             if website and not is_junk_domain(website):
                 urls_to_check.append((h['id'], normalize_url(website)))
@@ -1490,7 +1621,7 @@ class BatchDetector:
 
         # Filter to only reachable hotels
         reachable_hotels = []
-        for h in hotels:
+        for h in filtered_hotels:
             hotel_id = h['id']
             website = h.get('website', '')
 
